@@ -1,0 +1,9 @@
+[project]
+name = "roboneuron"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10.12"
+dependencies = []
+[tool.setuptools]
+packages = ["wrapper", "vla_src", "converter", "mcptool_lib"]

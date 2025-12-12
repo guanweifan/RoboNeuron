@@ -1,0 +1,149 @@
+from typing import List, Dict, Any
+from pydantic import BaseModel
+import time
+import threading
+
+# ROS 2 Imports
+import rclpy
+from rclpy.node import Node
+# Dynamic import based on generator context
+from {{ msg_package }}.msg import {{ msg_name }}
+
+from mcp.server.fastmcp import FastMCP
+
+# Initialize FastMCP
+mcp = FastMCP("{{ msg_name | lower }}-mcptool")
+
+# --- Pydantic Models Generation ---
+{% for field_name, subfields in msg_structure.items() if subfields is mapping -%}
+class {{ field_name | capitalize }}(BaseModel):
+{%- for subfield, subtype in subfields.items() %}
+    {{ subfield }}: {{ subtype }}
+{%- endfor %}
+
+{% endfor -%}
+class {{ msg_name }}Input(BaseModel):
+{%- for field_name, field_def in msg_structure.items() %}
+    {%- if field_def is mapping %}
+    {{ field_name }}: {{ field_name | capitalize }}
+    {%- else %}
+    {{ field_name }}: {{ field_def }}
+    {%- endif %}
+{%- endfor %}
+
+
+# --- Helper Function for ROS Message Population ---
+def populate_ros_message(ros_msg, data_dict: Dict[str, Any]):
+    """
+    Recursively populates a ROS 2 message object from a dictionary (Pydantic dump).
+    Handles nested ROS messages.
+    """
+    for key, value in data_dict.items():
+        if not hasattr(ros_msg, key):
+            continue
+            
+        attr = getattr(ros_msg, key)
+        
+        # Check if the attribute is a nested ROS message (has standard slots)
+        if hasattr(attr, 'get_fields_and_field_types'):
+            if isinstance(value, dict):
+                populate_ros_message(attr, value)
+        else:
+            # Primitive type assignment
+            setattr(ros_msg, key, value)
+
+
+# --- ROS 2 Node Wrapper ---
+class {{ msg_name }}Publisher(Node):
+    """
+    Native ROS 2 Node to publish {{ msg_name }} messages.
+    """
+    def __init__(self):
+        super().__init__('mcp_{{ msg_name | lower }}_publisher')
+        self.publisher_ = self.create_publisher({{ msg_name }}, '{{ topic_name }}', 10)
+        self.get_logger().info('MCP Tool Node initialized for topic: {{ topic_name }}')
+
+    def publish(self, data: {{ msg_name }}Input) -> Dict:
+        """
+        Converts Pydantic model to ROS message and publishes it.
+        """
+        ros_msg = {{ msg_name }}()
+        
+        # Convert Pydantic model to dict, then populate ROS message
+        data_dict = data.model_dump()
+        populate_ros_message(ros_msg, data_dict)
+
+        self.publisher_.publish(ros_msg)
+        
+        return {
+            "op": "publish",
+            "topic": '{{ topic_name }}',
+            "timestamp": time.time(),
+            "data": data_dict
+        }
+
+    def publish_seq(self, data_seq: List[{{ msg_name }}Input], duration_seq: List[float]) -> List[Dict]:
+        results = []
+        for data, duration in zip(data_seq, duration_seq):
+            result = self.publish(data)
+            results.append(result)
+            time.sleep(duration)
+        return results
+
+
+# --- Global ROS 2 Initialization ---
+# MCP tools are stateless functions, so we need a global node instance.
+ros_node: {{ msg_name }}Publisher = None
+
+def init_ros_node():
+    global ros_node
+    try:
+        # Check if rclpy is already initialized (e.g. by another tool)
+        if not rclpy.ok():
+            rclpy.init()
+        ros_node = {{ msg_name }}Publisher()
+        
+        # Optional: Spin in a separate thread if you need subscriptions later
+        # thread = threading.Thread(target=rclpy.spin, args=(ros_node,), daemon=True)
+        # thread.start()
+        
+    except Exception as e:
+        print(f"Failed to initialize ROS node: {e}")
+
+# Initialize immediately upon module load
+init_ros_node()
+
+
+# --- MCP Tools ---
+
+@mcp.tool()
+def pub_{{ msg_name.lower() }}(data: {{ msg_name }}Input):
+    """
+    Publishes a single {{ msg_name }} message to {{ topic_name }}.
+    """
+    if not ros_node:
+        return "ROS Node not initialized."
+    
+    try:
+        result = ros_node.publish(data)
+        return f"Published to {{ topic_name }}"
+    except Exception as e:
+        return f"Failed to publish: {e}"
+
+@mcp.tool()
+def pub_{{ msg_name.lower() }}_seq(data_seq: List[{{ msg_name }}Input], duration_seq: List[float]):
+    """
+    Publishes a sequence of {{ msg_name }} messages.
+    """
+    if not ros_node:
+        return "ROS Node not initialized."
+
+    try:
+        ros_node.publish_seq(data_seq, duration_seq)
+        return "Sequence published successfully"
+    except Exception as e:
+        return f"Sequence failed: {e}"
+
+if __name__ == "__main__":
+    print(f"Starting MCP Server for {{ msg_name }}...")
+    mcp.run(transport="stdio")

@@ -1,0 +1,45 @@
+{
+  "fastv": {
+    "balanced": {
+      "default": {
+        "method_config": {
+          "use_fastv": true,
+          "fastv_k": 6,
+          "fastv_r": 0.5
+        },
+        "prune_config": {
+          "layer": "block_3",
+          "ratio": 0.3
+        }
+      },
+      "dummyvla": {
+        "method_config": {
+          "use_fastv": true,
+          "fastv_k": 9,
+          "fastv_r": 0.99
+        },
+        "prune_config": {
+          "layer": "dummy_block",
+          "ratio": 0.42
+        }
+      }
+    },
+    "off": {
+      "default": {
+        "method_config": {
+          "use_fastv": false
+        },
+        "prune_config": null
+      }
+    }
+  },
+
+  "none": {
+    "off": {
+      "default": {
+        "method_config": null,
+        "prune_config": null
+      }
+    }
+  }
+}
