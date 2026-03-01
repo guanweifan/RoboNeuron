@@ -1,0 +1,5 @@
+{
+    "openvla": "/path/to/your/openvla/model",
+    "openvla-oft": "/path/to/your/openvla-oft/model",
+    "pi0": "/path/to/your/pi0/model"
+}

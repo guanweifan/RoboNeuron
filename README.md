@@ -5,7 +5,7 @@
 [![ROS](https://img.shields.io/badge/ROS-Humble-blue.svg)](https://docs.ros.org/en/humble/)
 
 <p align="center">
-  <img src="./media/logo.png" width="500"
+  <img src="./assets/logo.png" width="500"
        style="border: 1px solid #ccc; border-radius: 8px;">
 </p>
 
@@ -19,85 +19,70 @@
 
 ## Project Overview
 
-**RoboNeuron** is an innovative embodied intelligence platform designed to bridge the gap between high-level AI reasoning and low-level robotic control. By integrating the **Model Context Protocol (MCP)** with **Robot Operating System (ROS 2)**, RoboNeuron modularizes the complete robotic operation pipeline—perception, reasoning, translation, and control.
-
-This platform provides a unified interface for Large Language Models (LLMs) to orchestrate Vision-Language-Action (VLA) models, enabling complex task execution on both physical and simulated robotic systems.
+**RoboNeuron** is a modular **middleware for embodied AI systems** that bridges high-level intelligence (e.g., LLMs, VLA models, and skill policies) with **ROS 2-based robotic execution**. It is designed for researchers and developers who want to integrate perception, inference, and control modules without tightly coupling model logic to robot-specific runtime details.
 
 <p align="center">
-  <img src="./media/framework.png" width="400"
+  <img src="./assets/stack.png" width="60%"
        style="border: 1px solid #ccc; border-radius: 8px;">
 </p>
 
+<p align="center"><em>RoboNeuron as the middleware layer between embodied intelligence and ROS 2 execution.</em></p>
 
-### Key Features
-- **Integrated LLM-ROS Control**: Bridges LLM/VLA cognitive models with the ROS execution environment using MCP and automated ROS message translation for seamless, type-safe task orchestration.  
-- **Modular Decoupling**: Strictly separated Perception, Planning, and Control modules enable flexible hardware, sensor, and algorithm replacement across deployment scenarios.  
-- **VLA Integration and Acceleration**: Unified interfaces for VLA models with optimized inference pipelines allow high-performance execution and benchmarking across algorithms and hardware.
+At its core, RoboNeuron separates **agent-facing orchestration** from **ROS 2 data transport**, enabling two common execution patterns under one unified framework:
 
+- **Direct tool-to-ROS execution** for low-latency robot commands
+- **Closed-loop perception → VLA inference → control pipelines** for embodied tasks
 
-### Core Components
+<p align="center">
+  <img src="./assets/framework.png" width="70%"
+       style="border: 1px solid #ccc; border-radius: 8px;">
+</p>
 
-1. **Perception Module** (`perception_mcp.py`)
-   - Manages visual data acquisition from various sources.
-   - Publishes synchronized RGB/Depth streams to ROS topics.
-   - Supports modular camera wrappers (Intel RealSense, Simulation Dummy, etc.).
+<p align="center"><em>Unified architecture for capability exposure, orchestration, and ROS-backed execution.</em></p>
 
-2. **VLA Inference Module** (`infer_mcp.py`)
-   - Hosts Vision-Language-Action models for real-time inference.
-   - Decodes visual context and natural language instructions into robot actions.
-   - Supports multiple backends including OpenVLA and OpenVLA-OFT.
+### Highlights
 
-3. **Control Module** (`control_mcp.py`)
-   - Handles Inverse Kinematics (IK) and trajectory generation.
-   - Converts Cartesian end-effector commands into joint-space trajectories.
-   - Compatible with standard URDF descriptions (Panda, FR3).
+- **Modular by design**: perception, VLA, control, and robot backends can be developed and replaced independently
+- **ROS-native execution**: integrates with existing ROS 2 topics, messages, controllers, and simulators
+- **VLA-ready infrastructure**: supports heterogeneous VLA backends through adapter-oriented integration
+- **Tool-based capability exposure**: maps robot functions into structured callable interfaces for agentic workflows
+- **Deployment-friendly**: supports both simulation and real-world robotic systems under the same abstraction
 
-4. **Model Translation & Optimization** (`translator/`)
-   - Tools for converting general VLA checkpoints into optimized formats for deployment.
-   - Facilitates message translation between ROS standard types and AI model tensor inputs.
+In short, RoboNeuron is a **reusable infrastructure layer** for building, testing, and deploying embodied AI pipelines on top of ROS 2.
 
 ## Directory Structure
 
 ```text
 roboneuron/
 ├── README.md                     # Project documentation
-│
-├── config/                       # Configuration files
+├── pyproject.toml
+├── uv.lock
+├── src/
+│   └── roboneuron_core/          # Core implementation
+│       ├── cli/                  # Command/entry modules
+│       ├── servers/              # MCP server implementations
+│       │   └── generated/        # Generated MCP server modules
+│       ├── adapters/             # Camera/robot/VLA adapters
+│       ├── types/                # Typed config/data models
+│       └── utils/                # Reusable utilities
+├── tests/
+│   └── unit/                     # Current unit test suites
+├── docs/                         # Project documentation
+├── configs/                      # Configuration files
 │   ├── vla_models.json           # VLA model paths and configurations
 │   └── vla_accel_presets.json    # Inference acceleration presets
-│
-├── mcptoollib/                   # MCP server implementations
-│   ├── control_mcp.py            # Control MCP server (Kinematics & Motion)
-│   ├── eecommand_mcptool.py      # End-effector command tools
-│   ├── infer_mcp.py              # VLA inference MCP server
-│   ├── perception_mcp.py         # Perception MCP server
-│   ├── simulation_mcp.py         # Simulation Environment MCP server
-│   └── twist_mcptool.py          # Velocity (Twist) command tools
-│
-├── wrapper/                      # Interchangeable component wrappers
-│   ├── camera_wrapper/           # Camera interface implementations
-│   │   ├── base.py               # Abstract base class for cameras
-│   │   └── realsense.py          # Intel RealSense implementation
-│   │
-│   ├── vla_wrapper/              # VLA model implementations
-│   │   ├── base.py               # Abstract base class for models
-│   │   ├── openvla.py            # OpenVLA standard wrapper
-│   │   ├── openvla_oft.py        # OpenVLA-OFT wrapper
-│   │   └── openvla_fastv.py      # OpenVLA with FastV acceleration
-│   │
-│   └── robot_wrapper/            # Robot hardware adapters
-│       ├── base.py               # Abstract base class for robots
-│       └── libero_adapter.py     # LIBERO simulation adapter
-│
+├── templates/                    # Templates for generating new MCP tools
+├── assets/                       # README assets
 ├── urdf/                         # Robot description files
 │   ├── panda.urdf                # Franka Panda robot URDF
 │   └── fr3.urdf                  # Franka Research 3 robot URDF
-│
-├── vla_src/                      # VLA model source code (Submodules)
-│
-├── translator/                   # Model conversion & message translation tools
-├── template/                     # Templates for generating new MCP tools
-└── ros2_msg/                     # Custom ROS 2 message definitions
+├── examples/
+│   └── basic/
+│       └── dummy_robot.py
+├── ros/
+│   └── custom_msgs/              # First-party ROS message package
+└── third_party/
+    └── vla_src/                  # Vendored VLA source trees
 ```
 
 ## Installation & Configuration
@@ -143,7 +128,8 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
 
 ```json
 {
-  "roboneuron-perception": {
+  "mcpServers": {
+    "roboneuron-perception": {
     "autoApprove": [],
     "disabled": false,
     "timeout": 60,
@@ -151,11 +137,11 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
     "command": "bash",
     "args": [
       "-c",
-      "source /opt/ros/humble/setup.bash && uv --directory /home/user/roboneuron run -m mcptoollib.perception_mcp"
+      "source /opt/ros/humble/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-perception"
     ],
     "cwd": "/home/user/roboneuron"
-  },
-  "roboneuron-vla": {
+    },
+    "roboneuron-vla": {
     "autoApprove": [],
     "disabled": false,
     "timeout": 60,
@@ -163,11 +149,11 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
     "command": "bash",
     "args": [
       "-c",
-      "source /opt/ros/humble/setup.bash && uv --directory /home/user/roboneuron run -m mcptoollib.infer_mcp"
+      "source /opt/ros/humble/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-vla"
     ],
     "cwd": "/home/user/roboneuron"
-  },
-  "roboneuron-control": {
+    },
+    "roboneuron-control": {
     "autoApprove": [],
     "disabled": false,
     "timeout": 60,
@@ -175,11 +161,23 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
     "command": "bash",
     "args": [
       "-c",
-      "source /opt/ros/humble/setup.bash && uv --directory /home/user/roboneuron run -m mcptoollib.control_mcp"
+      "source /opt/ros/humble/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-control"
     ],
     "cwd": "/home/user/roboneuron"
-  },
-  "roboneuron-twist": {
+    },
+    "roboneuron-simulation": {
+      "autoApprove": [],
+      "disabled": false,
+      "timeout": 60,
+      "type": "stdio",
+      "command": "bash",
+      "args": [
+        "-c",
+        "source /opt/ros/humble/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-simulation"
+      ],
+      "cwd": "/home/user/roboneuron"
+    },
+    "roboneuron-twist": {
     "autoApprove": [],
     "disabled": false,
     "timeout": 60,
@@ -187,11 +185,11 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
     "command": "bash",
     "args": [
       "-c",
-      "source /opt/ros/humble/setup.bash && uv --directory /home/user/roboneuron run -m mcptoollib.twist_mcptool"
+      "source /opt/ros/humble/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-twist"
     ],
     "cwd": "/home/user/roboneuron"
-  },
-  "roboneuron-eecommand": {
+    },
+    "roboneuron-eecommand": {
     "autoApprove": [],
     "disabled": false,
     "timeout": 60,
@@ -199,23 +197,42 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
     "command": "bash",
     "args": [
       "-c",
-      "source /opt/ros/humble/setup.bash && source /home/user/roboneuron/ros2_msg/install/setup.bash && uv --directory /home/user/roboneuron run -m mcptoollib.eecommand_mcptool"
+      "source /opt/ros/humble/setup.bash && source /home/user/roboneuron/ros/custom_msgs/install/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-eecommand"
     ],
     "cwd": "/home/user/roboneuron"
+    }
   }
 }
 ```
 
 ### Step 5: Configure VLA Models
 
-Edit `config/vla_models.json` to specify paths to your VLA model checkpoints:
+Edit `configs/vla_models.json` to specify paths to your VLA model checkpoints:
 
 ```json
 {
   "openvla": "/path/to/your/openvla/model",
-  "openvla-oft": "/path/to/your/openvla-oft/model"
+  "openvla-oft": "/path/to/your/openvla-oft/model",
+  "pi0": "/path/to/your/pi0/model"
 }
 ```
+
+### Optional Components Added in Current Mainline
+
+- `src/roboneuron_core/adapters/robot/calvin_adapter.py`: CALVIN adapter (optional runtime dependency).
+- `src/roboneuron_core/adapters/vla/dummyvla.py`: lightweight pipeline test model.
+- `src/roboneuron_core/adapters/vla/pi0.py`: OpenPI (`pi0`) wrapper (optional runtime dependency).
+
+### CLI Entrypoints
+
+Canonical service entrypoints are:
+
+- `uv run roboneuron-mcp-perception`
+- `uv run roboneuron-mcp-vla`
+- `uv run roboneuron-mcp-control`
+- `uv run roboneuron-mcp-simulation`
+- `uv run roboneuron-mcp-twist`
+- `uv run roboneuron-mcp-eecommand`
 
 ## Demo Showcase
 
@@ -224,7 +241,7 @@ Edit `config/vla_models.json` to specify paths to your VLA model checkpoints:
 `Instruction: "Make the car move forward at a speed of 0.5m/s"`
 
 <div align="center">
-    <img src="media/isaac_vechcle_demo.gif" width="650" style="max-width: 100%; border: 1px solid #ccc; border-radius: 8px;">
+    <img src="assets/isaac_vechcle_demo.gif" width="650" style="max-width: 100%; border: 1px solid #ccc; border-radius: 8px;">
 </div>
 
 
@@ -235,7 +252,7 @@ Edit `config/vla_models.json` to specify paths to your VLA model checkpoints:
 `Instruction: "Move the robotic arm gripper forward at a speed of 0.1m/s"`
 
 <div align="center">
-    <img src="media/isaac_franka_demo.gif" width="650" style="max-width: 100%; border: 1px solid #ccc; border-radius: 8px;">
+    <img src="assets/isaac_franka_demo.gif" width="650" style="max-width: 100%; border: 1px solid #ccc; border-radius: 8px;">
 </div>
 
 ---
@@ -245,7 +262,7 @@ Edit `config/vla_models.json` to specify paths to your VLA model checkpoints:
 `Instruction: "Using RealSense camera and OpenVLA model, to pick up the blue bowl."`
 
 <div align="center">
-    <img src="media/franka_vla_demo.gif" width="650" style="max-width: 100%; border: 1px solid #ccc; border-radius: 8px;">
+    <img src="assets/franka_vla_demo.gif" width="650" style="max-width: 100%; border: 1px solid #ccc; border-radius: 8px;">
 </div>
 
 ---
@@ -254,7 +271,7 @@ Edit `config/vla_models.json` to specify paths to your VLA model checkpoints:
 
 ### Adding New Camera Wrappers
 
-1. Create a new file in `wrapper/camera_wrapper/`
+1. Create a new file in `src/roboneuron_core/adapters/camera/`
 2. Inherit from `CameraWrapper` base class
 3. Implement required methods:
    ```python
@@ -271,11 +288,11 @@ Edit `config/vla_models.json` to specify paths to your VLA model checkpoints:
            # Clean up resources
            pass
    ```
-4. Register in `wrapper/camera_wrapper/__init__.py`
+4. Register in `src/roboneuron_core/adapters/camera/__init__.py`
 
 ### Integrating New VLA Models
 
-1. Create wrapper in `wrapper/vla_wrapper/`
+1. Create wrapper in `src/roboneuron_core/adapters/vla/`
 2. Inherit from `ModelWrapper` base class
 3. Implement model loading and inference:
    ```python
@@ -288,25 +305,25 @@ Edit `config/vla_models.json` to specify paths to your VLA model checkpoints:
            # Generate action from image and instruction
            pass
    ```
-4. Add model configuration to `config/vla_models.json`
+4. Add model configuration to `configs/vla_models.json`
 
 ### Supporting New Robot Platforms
 
-1. Create adapter in `wrapper/robot_wrapper/`
+1. Create adapter in `src/roboneuron_core/adapters/robot/`
 2. Implement platform-specific communication
 3. Provide URDF or kinematic description
 4. Test with simulation before hardware deployment
 
 ### Registering a Custom ROS 2 Message
 
-If you create a new ROS message file under your project directory, for example: `ros2_msg/custom_msgs/msg/test.msg`, you must rebuild and source the ROS 2 workspace so the new message type becomes available to ROS and your MCP tools.
+If you create a new ROS message file under your project directory, for example: `ros/custom_msgs/msg/test.msg`, you must rebuild and source the ROS 2 workspace so the new message type becomes available to ROS and your MCP tools.
 
 ```bash
 # Navigate to your workspace
-cd ros2_msg
+cd ros/custom_msgs
 
 # Install dependencies
-rosdep install --from-paths src -i -y
+rosdep install --from-paths . -i -y
 
 # Build the workspace
 colcon build --symlink-install
@@ -322,7 +339,7 @@ Use the template system to generate new MCP tools:
 
 ```bash
 # Generate new MCP tool template
-uv run generator.py your_topic your_msg
+uv run python -m roboneuron_core.cli.mcp_tool_generator your_topic your_msg
 ```
 
 
@@ -340,5 +357,9 @@ If you use this project, please cite the paper:
       url={https://arxiv.org/abs/2512.10394}, 
 }
 ```
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](./LICENSE) file for details.
 
 ---

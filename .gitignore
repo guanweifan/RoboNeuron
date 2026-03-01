@@ -1,14 +1,88 @@
-# Python-generated files
+# -----------------------------------------------------------------------------
+# RoboNeuron .gitignore
+# Goal: keep source/configs/docs in Git, ignore local build/cache/runtime artifacts.
+# -----------------------------------------------------------------------------
+
+# Python bytecode / cache
 __pycache__/
-*.py[oc]
+*.py[cod]
+*$py.class
+
+# Build / packaging artifacts
 build/
 dist/
+site/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
 wheels/
-*.egg-info
 
-# Virtual environments
-.venv
-.vscode
-/nomcp-version
-/ros2_msg
-*dummy*
+# Test / lint / type-check cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Virtual environments / local Python env
+.venv/
+venv/
+env/
+ENV/
+__pypackages__/
+.python-version
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE / editor
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs / runtime temp
+*.log
+logs/
+tmp/
+temp/
+
+# ROS 2 generated artifacts (keep ros/custom_msgs source files tracked)
+ros/custom_msgs/build/
+ros/custom_msgs/install/
+ros/custom_msgs/log/
+ros/custom_msgs/**/build/
+ros/custom_msgs/**/install/
+ros/custom_msgs/**/log/
+
+# ROS bag / database artifacts
+*.bag
+*.bag.active
+*.db3
+
+# Local model / checkpoint artifacts (avoid committing large binaries)
+checkpoints/
+weights/
+models/
+*.ckpt
+*.pt
+*.pth
+*.safetensors
+*.onnx
+
+# Local config / machine-specific files
+.env
+.env.*
+!.env.example
+nomcp-version
+
+# Windows ADS filename artifacts occasionally introduced in repos
+*:[Zz]one.Identifier*
