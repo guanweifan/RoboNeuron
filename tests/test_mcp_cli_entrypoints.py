@@ -45,10 +45,10 @@ class TestMcpCliEntrypoints(unittest.TestCase):
             "roboneuron_core.servers.generated.twist_server",
         )
 
-    def test_mcp_eecommand_routes(self) -> None:
+    def test_mcp_eef_delta_routes(self) -> None:
         self._assert_routed(
-            mcp_entrypoints.mcp_eecommand,
-            "roboneuron_core.servers.generated.eecommand_server",
+            mcp_entrypoints.mcp_eef_delta,
+            "roboneuron_core.servers.generated.eef_delta_server",
         )
 
 
