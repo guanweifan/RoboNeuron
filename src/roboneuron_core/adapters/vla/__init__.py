@@ -20,11 +20,9 @@ def get_registry() -> dict[str, type[ModelWrapper]]:
 
 
 def _register_builtin_models() -> None:
-    from .dummy import DummyVLAWrapper
-    from .dummyvla import TestVLAWrapper
+    from .dummy_vla import DummyVLAWrapper
 
     register_model("dummy", DummyVLAWrapper)
-    register_model("dummyvla", TestVLAWrapper)
 
     try:
         from .openvla import OpenVLAWrapper

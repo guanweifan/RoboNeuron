@@ -12,7 +12,7 @@
           "ratio": 0.3
         }
       },
-      "dummyvla": {
+      "dummy": {
         "method_config": {
           "use_fastv": true,
           "fastv_k": 9,

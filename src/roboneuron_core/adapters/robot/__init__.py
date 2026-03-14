@@ -22,6 +22,10 @@ def get_registry() -> dict[str, type[AdapterWrapper]]:
 
 
 def _register_builtin_adapters() -> None:
+    from .dummy_robot import DummyRobotAdapterWrapper
+
+    register_adapter("dummy", DummyRobotAdapterWrapper)
+
     try:
         from .libero_adapter import LiberoAdapterWrapper
     except ImportError as err:

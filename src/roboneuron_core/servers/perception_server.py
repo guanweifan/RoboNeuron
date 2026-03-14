@@ -78,7 +78,7 @@ def start_camera(wrapper_import: str, topic: str = "/isaac_rgb") -> str:
     It streams RGB images to a specified ROS topic.
     
     Args:
-        wrapper_import: Dot-path to the camera wrapper (e.g., 'roboneuron_core.adapters.camera.dummy.DummyCameraWrapper').
+        wrapper_import: Dot-path to the camera wrapper (e.g., 'roboneuron_core.adapters.camera.dummy_camera.DummyCameraWrapper').
         topic: [Output Topic] The ROS topic used to publish the streaming RGB images (default: /isaac_rgb).
     """
     # ... (function body unchanged)
@@ -125,8 +125,8 @@ if __name__ == "__main__":
     # Provide a convenient local test harness so you can debug without running the MCP service.
     parser = argparse.ArgumentParser(description="perception_server.py local test harness")
     parser.add_argument("--local-test", action="store_true", help="Run local start/stop test instead of MCP server")
-    parser.add_argument("--wrapper", type=str, default="roboneuron_core.adapters.camera.dummy.DummyCameraWrapper",
-                        help="Wrapper import path to test, e.g. 'roboneuron_core.adapters.camera.dummy.DummyCameraWrapper'")
+    parser.add_argument("--wrapper", type=str, default="roboneuron_core.adapters.camera.dummy_camera.DummyCameraWrapper",
+                        help="Wrapper import path to test, e.g. 'roboneuron_core.adapters.camera.dummy_camera.DummyCameraWrapper'")
     parser.add_argument("--topic", type=str, default="/isaac_rgb",
                         help="Topic to publish to during local test")
     args = parser.parse_args()
