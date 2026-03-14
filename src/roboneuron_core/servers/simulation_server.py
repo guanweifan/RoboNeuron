@@ -15,8 +15,10 @@ import rclpy
 from cv_bridge import CvBridge
 from mcp.server.fastmcp import FastMCP
 from rclpy.node import Node
+from roboneuron_interfaces.msg import EEFDeltaCommand
 from sensor_msgs.msg import Image as RosImage
-from std_msgs.msg import Float64MultiArray
+
+from roboneuron_core.utils.eef_delta import EEF_DELTA_CMD_TOPIC, array_to_eef_delta_command, eef_delta_command_to_array
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -101,7 +103,7 @@ class SimulationPublishNode(Node):
         except Exception as e:
             self.get_logger().warning(f"Failed to create output dir {self.output_dir}: {e}")
         self._publisher = self.create_publisher(RosImage, public_topic, 10)
-        self.create_subscription(Float64MultiArray, input_topic, self.robot_update_cb, 10)
+        self.create_subscription(EEFDeltaCommand, input_topic, self.robot_update_cb, 10)
 
 
     def _timer_callback(self) -> None:
@@ -135,9 +137,9 @@ class SimulationPublishNode(Node):
                 else:
                     self.get_logger().warning("No suitable image found in visual_observation")
 
-    def robot_update_cb(self, msg: Float64MultiArray) -> None:
+    def robot_update_cb(self, msg: EEFDeltaCommand) -> None:
         with self.locker:
-            action = list(msg.data)
+            action = eef_delta_command_to_array(msg).tolist()
 
             # 1) Step/update env (compatible with libero / calvin)
             try:
@@ -233,7 +235,7 @@ def start_simulation(
     suite: Any | None = None,
     task_id: int | None = None,
     public_topic: str = "/simulation_rgb",
-    input_topic: str = "/ee_command",
+    input_topic: str = EEF_DELTA_CMD_TOPIC,
     adapter_config: dict[str, Any] | None = None,
     rate_hz: int = 10,
 ) -> str:
@@ -295,13 +297,13 @@ class ControlNode:
     """
     ROS2 node simulating a minimal policy control loop for local testing.
 
-    Subscribes to simulation images and publishes a constant dummy action.
+    Subscribes to simulation images and publishes a constant dummy EEF delta command.
     """
-    def __init__(self, input_topic: str = "/ee_command", publish_topic: str = "/ee_command"):
+    def __init__(self, input_topic: str = EEF_DELTA_CMD_TOPIC, publish_topic: str = EEF_DELTA_CMD_TOPIC):
         self.node = rclpy.create_node("control_node")
         self._cv_bridge = CvBridge()
-        
-        self.publisher = self.node.create_publisher(Float64MultiArray, publish_topic, 10)
+
+        self.publisher = self.node.create_publisher(EEFDeltaCommand, publish_topic, 10)
         self.subscription = self.node.create_subscription(RosImage, "/simulation_rgb", self.image_callback, 10)
         self.latest_image = None
         
@@ -325,8 +327,7 @@ class ControlNode:
         self.latest_image = cv_image
         
         # Policy Logic Placeholder: VLA model inference would occur here
-        action_msg = Float64MultiArray()
-        action_msg.data = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # demo action
+        action_msg = array_to_eef_delta_command([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.publisher.publish(action_msg)
 
     def stop(self) -> None:
@@ -339,6 +340,12 @@ class ControlNode:
 
 def create_adapter_config_from_args(wrapper_name: str, **kwargs) -> dict[str, Any]:
     """Create adapter configuration based on wrapper type."""
+    if wrapper_name == "dummy":
+        return {
+            "image_size": kwargs.get("resolution", 128),
+            "instruction": kwargs.get("instruction", "execute dummy task"),
+            "action_scale": kwargs.get("action_scale", 0.1),
+        }
     if wrapper_name == "libero":
         return {
             "libero_suite_name": kwargs.get("suite", "libero_spatial"),
@@ -367,13 +374,15 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Simulation local test harness")
     parser.add_argument("--local-test", action="store_true", default=False, help="Run local simulation test instead of MCP server")
-    parser.add_argument("--wrapper", type=str, default="libero", help="Adapter wrapper name (libero, calvin) or import path")
+    parser.add_argument("--wrapper", type=str, default="dummy", help="Adapter wrapper name (dummy, libero, calvin) or import path")
     parser.add_argument("--suite", type=str, default="libero_spatial", help="Task suite name (for libero)")
     parser.add_argument("--task-id", type=int, default=0, help="Task ID")
     parser.add_argument("--dataset-path", type=str, help="Dataset path (for calvin)")
     parser.add_argument("--show-gui", action="store_true", default=False, help="Show GUI (for calvin)")
     parser.add_argument("--resolution", type=int, default=768, help="Visual resolution")
     parser.add_argument("--substeps", type=int, default=10, help="Step substeps")
+    parser.add_argument("--instruction", type=str, default="execute dummy task", help="Task instruction (for dummy adapter)")
+    parser.add_argument("--action-scale", type=float, default=0.1, help="Action scale (for dummy adapter)")
     parser.add_argument("--rate-hz", type=int, default=10, help="Publishing rate in Hz")
     parser.add_argument("--load-sequences", action="store_true", default=False,
                     help="(calvin) load evaluation sequences (slow to start, only for calvin)")
@@ -383,7 +392,7 @@ if __name__ == "__main__":
         print("LOCAL TEST MODE: starting simulation node...")
 
         # Determine wrapper import path and config
-        if args.wrapper in ["libero", "calvin"]:
+        if args.wrapper in ["dummy", "libero", "calvin"]:
             from roboneuron_core.adapters.robot import get_registry
             registry = get_registry()
             if args.wrapper not in registry:
@@ -404,6 +413,8 @@ if __name__ == "__main__":
             show_gui=args.show_gui,
             resolution=args.resolution,
             substeps=args.substeps,
+            instruction=args.instruction,
+            action_scale=args.action_scale,
             load_sequences=args.load_sequences, 
         )
 

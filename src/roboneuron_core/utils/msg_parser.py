@@ -119,7 +119,7 @@ class ROSMsgIndexer:
                 base_dirs.append(nested_pkg_msg_dir)
                 continue
 
-            # Allow passing a package root directly (e.g., base_path="ros/custom_msgs")
+            # Allow passing a package root directly (e.g., base_path="ros/roboneuron_interfaces")
             if os.path.isdir(base_msg_dir) and pkg == base_pkg_name:
                 base_dirs.append(base_msg_dir)
 
@@ -145,11 +145,11 @@ class ROSMsgIndexer:
 
 
 if __name__ == "__main__":
-    BASE_PATH = "ros/custom_msgs"
-    TARGET_PKGS = ["custom_msgs"]
+    BASE_PATH = "ros/roboneuron_interfaces"
+    TARGET_PKGS = ["roboneuron_interfaces"]
 
     indexer = ROSMsgIndexer(BASE_PATH, TARGET_PKGS)
-    indexer.generate_full_index("ros/custom_msgs/ros_msg_index.json")
+    indexer.generate_full_index("ros/roboneuron_interfaces/ros_msg_index.json")
 
-    eecommand_struct = indexer.get_type_structure("custom_msgs/EECommand")
-    print(json.dumps(eecommand_struct, indent=2))
+    eef_delta_struct = indexer.get_type_structure("roboneuron_interfaces/EEFDeltaCommand")
+    print(json.dumps(eef_delta_struct, indent=2))

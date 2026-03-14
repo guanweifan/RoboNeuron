@@ -11,6 +11,6 @@ class InferenceConfig:
     instruction: str
     model_path: str | None = None
     input_topic: str = "/isaac_rgb"
-    output_topic: str = "/ee_command"
+    output_topic: str = "/eef_delta_cmd"
     accel_method: str = "none"
     accel_level: str = "off"

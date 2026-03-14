@@ -9,7 +9,7 @@ from typing import Literal
 @dataclass(frozen=True)
 class ControlConfig:
     urdf_path: str
-    cartesian_cmd_topic: str = "/ee_command"
+    cartesian_cmd_topic: str = "/eef_delta_cmd"
     state_feedback_topic: str = "/isaac_joint_states"
     joint_cmd_topic: str = "/isaac_joint_commands"
-    cmd_msg_type: Literal["JointTrajectory", "JointState"] = "JointTrajectory"
+    cmd_msg_type: Literal["JointTrajectory", "JointState"] = "JointState"

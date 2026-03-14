@@ -57,7 +57,7 @@ Design principles:
   - `control_server.py`: IK control MCP server
   - `simulation_server.py`: simulation-driven MCP server
   - `generated/twist_server.py`: generated Twist MCP server
-  - `generated/eecommand_server.py`: generated EECommand MCP server
+  - `generated/eef_delta_server.py`: generated EEF delta MCP server
 
 - `src/roboneuron_core/adapters/`
   - `camera/`: camera adapters and registry
@@ -87,17 +87,15 @@ Design principles:
 
 ### 3.4 ROS and Third-Party Code
 
-- `ros/custom_msgs/`
-  - First-party ROS custom message package (`EECommand.msg`)
+- `ros/roboneuron_interfaces/`
+  - First-party ROS custom message package (`EEFDeltaCommand.msg`)
 - `third_party/vla_src/`
   - Upstream/external VLA source code
 
-### 3.5 Tests and Examples
+### 3.5 Tests
 
-- `tests/unit/`
-  - Unit tests (only non-placeholder test directories retained)
-- `examples/basic/`
-  - Example scripts (for example `dummy_robot.py`)
+- `tests/`
+  - Flat test suite with marker-based grouping
 
 ---
 
@@ -110,7 +108,7 @@ The project currently exposes 6 MCP service entry commands:
 3. `roboneuron-mcp-control`
 4. `roboneuron-mcp-simulation`
 5. `roboneuron-mcp-twist`
-6. `roboneuron-mcp-eecommand`
+6. `roboneuron-mcp-eef-delta`
 
 These are registered in `pyproject.toml` under `[project.scripts]` and dispatched by `roboneuron_core.cli.mcp_entrypoints`.
 
@@ -130,10 +128,18 @@ uv sync
 source /opt/ros/humble/setup.bash
 ```
 
-If you need the `eecommand` service, also source the custom message workspace:
+Build and source the custom interface workspace before using services that publish or consume `EEFDeltaCommand` (`vla`, `control`, `simulation`, `eef_delta`):
 
 ```bash
-source /home/guanweifan/RoboNeuron/ros/custom_msgs/install/setup.bash
+cd /home/guanweifan/RoboNeuron/ros
+rosdep install --from-paths roboneuron_interfaces -i -y
+colcon build --packages-select roboneuron_interfaces --symlink-install --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
+```
+
+Then source the generated workspace:
+
+```bash
+source /home/guanweifan/RoboNeuron/ros/install/setup.bash
 ```
 
 ### 5.3 Start MCP Services (Examples)
@@ -144,7 +150,7 @@ uv run roboneuron-mcp-vla
 uv run roboneuron-mcp-control
 uv run roboneuron-mcp-simulation
 uv run roboneuron-mcp-twist
-uv run roboneuron-mcp-eecommand
+uv run roboneuron-mcp-eef-delta
 ```
 
 ### 5.4 Quality Checks
@@ -153,7 +159,7 @@ uv run roboneuron-mcp-eecommand
 uv run ruff check .
 uv run mypy
 uv run python -m unittest discover -s tests -p "test_*.py"
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest tests/unit -q
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest tests -q
 ```
 
 ---
@@ -164,16 +170,16 @@ Include in Git:
 
 - Source: `src/roboneuron_core/`, `tests/`, `configs/`, `templates/`, `urdf/`
 - Docs: `README.md`, `docs/`
-- Examples and assets: `examples/`, `assets/`
+- Assets: `assets/`
 - Project config: `pyproject.toml`, `uv.lock`, `.gitignore`
-- ROS custom message source: `ros/custom_msgs/`
+- ROS custom interface source: `ros/roboneuron_interfaces/`
 
 Do not include in Git:
 
 - Python cache: `__pycache__`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`
 - Virtual envs: `.venv/`, `venv/`
 - Build artifacts: `build/`, `dist/`, `*.egg-info/`
-- ROS build artifacts: `ros/custom_msgs/build/`, `ros/custom_msgs/install/`, `ros/custom_msgs/log/`
+- ROS build artifacts: `ros/build/`, `ros/install/`, `ros/log/`
 - Logs/temp files: `*.log`, `tmp/`
 - Local model weights and large files: `*.pt`, `*.pth`, `*.safetensors`, `*.onnx`
 - Local IDE config: `.vscode/`, `.idea/`
@@ -185,5 +191,5 @@ Do not include in Git:
 - Main architecture migrated to `src/roboneuron_core`
 - Unified command entrypoints: `roboneuron-mcp-*`
 - Placeholder directories have been removed
-- `custom_msgs` is managed as first-party code, `vla_src` as third-party code
+- `roboneuron_interfaces` is managed as first-party code, `vla_src` as third-party code
 - Quality gates (ruff/mypy/pytest) are runnable

@@ -65,8 +65,7 @@ roboneuron/
 │       ├── adapters/             # Camera/robot/VLA adapters
 │       ├── types/                # Typed config/data models
 │       └── utils/                # Reusable utilities
-├── tests/
-│   └── unit/                     # Current unit test suites
+├── tests/                        # Flat test suite (unit/integration via pytest markers)
 ├── docs/                         # Project documentation
 ├── configs/                      # Configuration files
 │   ├── vla_models.json           # VLA model paths and configurations
@@ -76,11 +75,8 @@ roboneuron/
 ├── urdf/                         # Robot description files
 │   ├── panda.urdf                # Franka Panda robot URDF
 │   └── fr3.urdf                  # Franka Research 3 robot URDF
-├── examples/
-│   └── basic/
-│       └── dummy_robot.py
 ├── ros/
-│   └── custom_msgs/              # First-party ROS message package
+│   └── roboneuron_interfaces/    # First-party ROS interface package
 └── third_party/
     └── vla_src/                  # Vendored VLA source trees
 ```
@@ -121,7 +117,19 @@ cd roboneuron
 uv sync
 ```
 
-### Step 4: Configure MCP Servers for Cline
+### Step 4: Build the ROS Interface Workspace
+
+The unified `EEFDeltaCommand` message is defined in `ros/roboneuron_interfaces`. Build it locally before starting MCP services that publish or consume task-space actions.
+
+```bash
+cd ros
+rosdep install --from-paths roboneuron_interfaces -i -y
+colcon build --packages-select roboneuron_interfaces --symlink-install --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
+source install/setup.bash
+cd ..
+```
+
+### Step 5: Configure MCP Servers for Cline
 
 To enable the Cline extension to communicate with RoboNeuron, add the following configuration to your MCP settings file.
 Note: Please replace /home/user/roboneuron with the absolute path to your cloned repository.
@@ -149,7 +157,7 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
     "command": "bash",
     "args": [
       "-c",
-      "source /opt/ros/humble/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-vla"
+      "source /opt/ros/humble/setup.bash && source /home/user/roboneuron/ros/install/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-vla"
     ],
     "cwd": "/home/user/roboneuron"
     },
@@ -161,7 +169,7 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
     "command": "bash",
     "args": [
       "-c",
-      "source /opt/ros/humble/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-control"
+      "source /opt/ros/humble/setup.bash && source /home/user/roboneuron/ros/install/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-control"
     ],
     "cwd": "/home/user/roboneuron"
     },
@@ -173,7 +181,7 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
       "command": "bash",
       "args": [
         "-c",
-        "source /opt/ros/humble/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-simulation"
+        "source /opt/ros/humble/setup.bash && source /home/user/roboneuron/ros/install/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-simulation"
       ],
       "cwd": "/home/user/roboneuron"
     },
@@ -189,7 +197,7 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
     ],
     "cwd": "/home/user/roboneuron"
     },
-    "roboneuron-eecommand": {
+    "roboneuron-eef-delta": {
     "autoApprove": [],
     "disabled": false,
     "timeout": 60,
@@ -197,7 +205,7 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
     "command": "bash",
     "args": [
       "-c",
-      "source /opt/ros/humble/setup.bash && source /home/user/roboneuron/ros/custom_msgs/install/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-eecommand"
+      "source /opt/ros/humble/setup.bash && source /home/user/roboneuron/ros/install/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-eef-delta"
     ],
     "cwd": "/home/user/roboneuron"
     }
@@ -205,7 +213,7 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
 }
 ```
 
-### Step 5: Configure VLA Models
+### Step 6: Configure VLA Models
 
 Edit `configs/vla_models.json` to specify paths to your VLA model checkpoints:
 
@@ -220,7 +228,7 @@ Edit `configs/vla_models.json` to specify paths to your VLA model checkpoints:
 ### Optional Components Added in Current Mainline
 
 - `src/roboneuron_core/adapters/robot/calvin_adapter.py`: CALVIN adapter (optional runtime dependency).
-- `src/roboneuron_core/adapters/vla/dummyvla.py`: lightweight pipeline test model.
+- `src/roboneuron_core/adapters/vla/dummy_vla.py`: lightweight pipeline test model.
 - `src/roboneuron_core/adapters/vla/pi0.py`: OpenPI (`pi0`) wrapper (optional runtime dependency).
 
 ### CLI Entrypoints
@@ -228,11 +236,11 @@ Edit `configs/vla_models.json` to specify paths to your VLA model checkpoints:
 Canonical service entrypoints are:
 
 - `uv run roboneuron-mcp-perception`
-- `uv run roboneuron-mcp-vla`
-- `uv run roboneuron-mcp-control`
-- `uv run roboneuron-mcp-simulation`
+- `source ros/install/setup.bash && uv run roboneuron-mcp-vla`
+- `source ros/install/setup.bash && uv run roboneuron-mcp-control`
+- `source ros/install/setup.bash && uv run roboneuron-mcp-simulation`
 - `uv run roboneuron-mcp-twist`
-- `uv run roboneuron-mcp-eecommand`
+- `source ros/install/setup.bash && uv run roboneuron-mcp-eef-delta`
 
 ## Demo Showcase
 
@@ -316,14 +324,14 @@ Canonical service entrypoints are:
 
 ### Registering a Custom ROS 2 Message
 
-If you create a new ROS message file under your project directory, for example: `ros/custom_msgs/msg/test.msg`, you must rebuild and source the ROS 2 workspace so the new message type becomes available to ROS and your MCP tools.
+If you create a new ROS message file under your project directory, for example: `ros/roboneuron_interfaces/msg/Test.msg`, you must rebuild and source the ROS 2 workspace so the new message type becomes available to ROS and your MCP tools.
 
 ```bash
 # Navigate to your workspace
-cd ros/custom_msgs
+cd ros
 
 # Install dependencies
-rosdep install --from-paths . -i -y
+rosdep install --from-paths roboneuron_interfaces -i -y
 
 # Build the workspace
 colcon build --symlink-install

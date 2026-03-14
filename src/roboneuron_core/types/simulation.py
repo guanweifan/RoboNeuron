@@ -12,5 +12,5 @@ class SimulationConfig:
     suite: str | dict[str, Any] | None = None
     task_id: int | None = None
     public_topic: str = "/simulation_rgb"
-    input_topic: str = "/ee_command"
+    input_topic: str = "/eef_delta_cmd"
     rate_hz: int = 10

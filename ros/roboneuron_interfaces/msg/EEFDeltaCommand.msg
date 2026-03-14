@@ -1,4 +1,4 @@
-# EECommand.msg
+# EEFDeltaCommand.msg
 
 # 1. Translation increment (3 DOF)
 float64 delta_x

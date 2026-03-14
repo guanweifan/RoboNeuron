@@ -9,9 +9,9 @@ from roboneuron_core.utils import msg_parser as mp
 # --- Global Defaults ---
 DEFAULT_TEMPLATE_DIR = "templates"
 DEFAULT_OUTPUT_DIR = Path("src/roboneuron_core/servers/generated")
-DEFAULT_ROS_MSG_BASE_PATH = "ros/custom_msgs"
+DEFAULT_ROS_MSG_BASE_PATH = "ros/roboneuron_interfaces"
 DEFAULT_ROS_TARGET_PKGS = [
-    "custom_msgs",
+    "roboneuron_interfaces",
 ]
 
 
@@ -104,8 +104,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Generate MCP tool file for a ROS message type using Jinja2 template."
     )
-    p.add_argument("topic", help="ROS topic name to use in generated tool (e.g. ee_command)")
-    p.add_argument("msg", help="ROS message type (short name or package/Message, e.g. EECommand or std_msgs/String)")
+    p.add_argument("topic", help="ROS topic name to use in generated tool (e.g. /eef_delta_cmd)")
+    p.add_argument("msg", help="ROS message type (short name or package/Message, e.g. EEFDeltaCommand or std_msgs/String)")
     p.add_argument(
         "--output",
         "-o",
@@ -130,7 +130,7 @@ def parse_args() -> argparse.Namespace:
         "--ros-pkgs",
         nargs="+",
         default=DEFAULT_ROS_TARGET_PKGS,
-        help="List of ROS packages to index (default: custom_msgs)",
+        help="List of ROS packages to index (default: roboneuron_interfaces)",
     )
     return p.parse_args()
 
