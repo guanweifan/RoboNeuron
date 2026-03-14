@@ -18,6 +18,7 @@ dependencies = [
     "networkx>=2.8",
     "fastmcp>=3.0.2",
     "pyrealsense2>=2.56.5.9235",
+    "lark>=1.3.1",
 ]
 
 [build-system]
@@ -36,7 +37,7 @@ roboneuron-mcp-vla = "roboneuron_core.cli.mcp_entrypoints:mcp_vla"
 roboneuron-mcp-control = "roboneuron_core.cli.mcp_entrypoints:mcp_control"
 roboneuron-mcp-simulation = "roboneuron_core.cli.mcp_entrypoints:mcp_simulation"
 roboneuron-mcp-twist = "roboneuron_core.cli.mcp_entrypoints:mcp_twist"
-roboneuron-mcp-eecommand = "roboneuron_core.cli.mcp_entrypoints:mcp_eecommand"
+roboneuron-mcp-eef-delta = "roboneuron_core.cli.mcp_entrypoints:mcp_eef_delta"
 
 [dependency-groups]
 dev = [
@@ -86,7 +87,7 @@ files = [
     "src/roboneuron_core/cli",
     "src/roboneuron_core/types",
     "src/roboneuron_core/utils",
-    "tests/unit",
+    "tests",
 ]
 exclude = [
     "^third_party/vla_src/",

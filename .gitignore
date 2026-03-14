@@ -55,13 +55,15 @@ logs/
 tmp/
 temp/
 
-# ROS 2 generated artifacts (keep ros/custom_msgs source files tracked)
-ros/custom_msgs/build/
-ros/custom_msgs/install/
-ros/custom_msgs/log/
-ros/custom_msgs/**/build/
-ros/custom_msgs/**/install/
-ros/custom_msgs/**/log/
+# ROS 2 generated artifacts
+# Keep only ros/roboneuron_interfaces source files in Git.
+# Users should rebuild ros/ locally with colcon on their own machines.
+ros/build/
+ros/install/
+ros/log/
+ros/**/build/
+ros/**/install/
+ros/**/log/
 
 # ROS bag / database artifacts
 *.bag

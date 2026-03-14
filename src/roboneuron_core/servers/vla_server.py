@@ -26,11 +26,13 @@ from cv_bridge import CvBridge
 from mcp.server.fastmcp import FastMCP
 from PIL import Image
 from rclpy.node import Node
+from roboneuron_interfaces.msg import EEFDeltaCommand
 from sensor_msgs.msg import Image as RosImage
-from std_msgs.msg import Float64MultiArray
 
 # Ensure wrapper imports are available
 from roboneuron_core.adapters.vla import get_registry
+from roboneuron_core.adapters.vla.dummy_vla import DUMMY_MODEL_PATH
+from roboneuron_core.utils.eef_delta import EEF_DELTA_CMD_TOPIC, array_to_eef_delta_command
 
 _VLA_PROCESS: multiprocessing.Process | None = None
 mcp = FastMCP("robomcp-vla")
@@ -140,6 +142,23 @@ def _load_vla_models_config() -> dict[str, str]:
 # ---------- end ----------
 
 
+def _resolve_model_path(model_name: str, model_path: str | None) -> str:
+    """Resolve model path while allowing dummy adapters to run without checkpoints."""
+    if model_path:
+        return model_path
+    if model_name == "dummy":
+        return DUMMY_MODEL_PATH
+
+    models_cfg = _load_vla_models_config()
+    resolved = models_cfg.get(model_name)
+    if not resolved:
+        raise ValueError(
+            f"model_path not provided and model '{model_name}' not found in configs/vla_models.json."
+            " Create configs/vla_models.json with a mapping or pass --model-path."
+        )
+    return resolved
+
+
 # ================= ROS Node ================= #
 
 class VLAServerNode(Node):
@@ -216,7 +235,7 @@ class VLAServerNode(Node):
         # 3) ROS Subscription / Publication Setup
         self._cv_bridge = CvBridge()
         self._sub = self.create_subscription(RosImage, input_topic, self._image_cb, 10)
-        self._pub = self.create_publisher(Float64MultiArray, output_topic, 10)
+        self._pub = self.create_publisher(EEFDeltaCommand, output_topic, 10)
 
         self.get_logger().info(
             f"VLA Model {model_name} listening on {input_topic} "
@@ -238,8 +257,7 @@ class VLAServerNode(Node):
             )
 
             if action is not None:
-                out_msg = Float64MultiArray()
-                out_msg.data = [float(x) for x in action.flatten().tolist()]
+                out_msg = array_to_eef_delta_command(action.flatten().tolist())
                 self._pub.publish(out_msg)
         except Exception:
             # Silence internal errors to keep the node running
@@ -283,7 +301,7 @@ def start_vla_inference(
     model_path: str | None,   
     instruction: str,
     input_topic: str = "/isaac_rgb",
-    output_topic: str = "/ee_command",
+    output_topic: str = EEF_DELTA_CMD_TOPIC,
     accel_method: str = "none",
     accel_level: str = "off",
 ) -> str:
@@ -291,7 +309,8 @@ def start_vla_inference(
     [VLA REASONING] Starts the Vision-Language-Action (VLA) node to execute complex tasks
     based on natural language instructions.
 
-    The VLA node subscribes to visual input and **autonomously publishes a sequence of EE commands** to the control topic until the task is complete.
+    The VLA node subscribes to visual input and **autonomously publishes a sequence of end-effector delta commands**
+    to the control topic until the task is complete.
 
     REQUIRED TASK FLOW (To pick up an object):
     1. Call `start_camera` (to provide images to input_topic).
@@ -319,18 +338,12 @@ def start_vla_inference(
     except Exception as e:
         return f"Error: failed to access model registry: {e}"
 
-    # If model_path not provided, try to load from configs/vla_models.json
-    if not model_path:
-        try:
-            models_cfg = _load_vla_models_config()
-            model_path = models_cfg.get(model_name)
-            if not model_path:
-                return (
-                    f"Error: model_path not provided and model '{model_name}' not found in configs/vla_models.json."
-                    f" Create configs/vla_models.json with a mapping or pass --model-path."
-                )
-        except Exception as e:
-            return f"Error: failed to load vla models config: {e}"
+    try:
+        model_path = _resolve_model_path(model_name, model_path)
+    except ValueError as exc:
+        return f"Error: {exc}"
+    except Exception as e:
+        return f"Error: failed to load vla models config: {e}"
 
     # Validate acceleration method and level
     valid_methods = {"none", "fastv"}
@@ -387,11 +400,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="vla_server.py local test harness")
     parser.add_argument("--local-test", action="store_true", help="Run local start/stop test instead of MCP server")
-    parser.add_argument("--model-name", type=str, default="default_model", help="Model registry key to test")
+    parser.add_argument("--model-name", type=str, default="dummy", help="Model registry key to test")
     parser.add_argument("--model-path", type=str, default=None, help="Path to model checkpoint")
     parser.add_argument("--instruction", type=str, default="do task", help="Natural language instruction for the VLA task")
     parser.add_argument("--input-topic", type=str, default="/isaac_rgb", help="Input image topic")
-    parser.add_argument("--output-topic", type=str, default="/ee_command", help="Output action topic")
+    parser.add_argument("--output-topic", type=str, default=EEF_DELTA_CMD_TOPIC, help="Output action topic")
     parser.add_argument("--accel-method", type=str, default="none", help="Acceleration method: none | fastv")
     parser.add_argument("--accel-level", type=str, default="off", help="Acceleration level for fastv: off | balanced | aggressive")
     args = parser.parse_args()

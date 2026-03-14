@@ -30,5 +30,5 @@ def mcp_twist() -> None:
     _run_module("roboneuron_core.servers.generated.twist_server")
 
 
-def mcp_eecommand() -> None:
-    _run_module("roboneuron_core.servers.generated.eecommand_server")
+def mcp_eef_delta() -> None:
+    _run_module("roboneuron_core.servers.generated.eef_delta_server")

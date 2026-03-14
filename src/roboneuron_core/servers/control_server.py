@@ -17,9 +17,11 @@ import rclpy
 from ikpy.chain import Chain
 from mcp.server.fastmcp import FastMCP
 from rclpy.node import Node
+from roboneuron_interfaces.msg import EEFDeltaCommand
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Float64MultiArray
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
+from roboneuron_core.utils.eef_delta import EEF_DELTA_CMD_TOPIC, eef_delta_command_to_array
 
 _CONTROL_PROCESS = None
 mcp = FastMCP("robomcp-control")
@@ -32,12 +34,12 @@ class AutoIKNode(Node):
 
     Subscribes to:
     - Robot joint state feedback (JointState).
-    - End-effector Cartesian delta commands (Float64MultiArray).
+    - End-effector Cartesian delta commands (EEFDeltaCommand).
 
     Publishes:
     - Joint trajectory commands (JointTrajectory) OR JointState commands derived from IK solution.
     """
-    def __init__(self, urdf_path, cartesian_cmd_topic, state_feedback_topic, joint_cmd_topic, cmd_msg_type="JointTrajectory"):
+    def __init__(self, urdf_path, cartesian_cmd_topic, state_feedback_topic, joint_cmd_topic, cmd_msg_type="JointState"):
         super().__init__('auto_ik_node')
         
         self.cmd_msg_type = cmd_msg_type
@@ -86,7 +88,7 @@ class AutoIKNode(Node):
                 self.active_joint_names.append(link.name)
 
         self.create_subscription(JointState, state_feedback_topic, self.state_cb, 10)
-        self.create_subscription(Float64MultiArray, cartesian_cmd_topic, self.cmd_cb, 10)
+        self.create_subscription(EEFDeltaCommand, cartesian_cmd_topic, self.cmd_cb, 10)
         
         # Conditional Publisher creation based on message type
         if self.cmd_msg_type == "JointState":
@@ -124,7 +126,7 @@ class AutoIKNode(Node):
             
         # 2. Calculate target pose (FK -> Delta -> Pose)
         current_pose = self.chain.forward_kinematics(current_ik_q)
-        dx, dy, dz, dr, dp, dy_aw, grip_cmd = msg.data
+        dx, dy, dz, dr, dp, dy_aw, grip_cmd = eef_delta_command_to_array(msg)
         
         # RPY Matrix construction
         cx, sx = np.cos(dr), np.sin(dr)
@@ -197,10 +199,10 @@ def _ros_worker(urdf_path: str, cartesian_cmd_topic: str, state_feedback_topic: 
 # --- MCP Tools ---
 @mcp.tool()
 def start_controller(urdf_path: str, 
-                     cartesian_cmd_topic: str = "/ee_command", 
+                     cartesian_cmd_topic: str = EEF_DELTA_CMD_TOPIC, 
                      state_feedback_topic: str = "/isaac_joint_states", 
                      joint_cmd_topic: str = "/isaac_joint_commands",
-                     cmd_msg_type: str = "JointTrajectory") -> str:
+                     cmd_msg_type: str = "JointState") -> str:
     """
     [ACTION/CONTROL] Starts the Inverse Kinematics (IK) controller loop.
     
@@ -210,7 +212,7 @@ def start_controller(urdf_path: str,
     
     Args:
         urdf_path: Path to the robot's URDF file (e.g., for the Panda arm).
-        cartesian_cmd_topic: [Input Topic] The topic where the IK controller listens for EE commands (default: /ee_command).
+        cartesian_cmd_topic: [Input Topic] The topic where the IK controller listens for EEF delta commands (default: /eef_delta_cmd).
         state_feedback_topic: The topic providing the robot's current joint state feedback (default: /isaac_joint_states).
         joint_cmd_topic: The topic used to publish joint trajectory commands to the robot (default: /isaac_joint_commands).
         cmd_msg_type: The message type used for the output commands ("JointTrajectory" or "JointState").
@@ -266,7 +268,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="control_server.py local test harness")
     parser.add_argument("--local-test", action="store_true", help="Run local start/stop test instead of MCP server")
     parser.add_argument("--urdf", type=str, default="urdf/panda.urdf", help="URDF path to test")
-    parser.add_argument("--cartesian-cmd-topic", type=str, default="/ee_command", help="Topic for Cartesian commands (Float64MultiArray)")
+    parser.add_argument("--cartesian-cmd-topic", type=str, default=EEF_DELTA_CMD_TOPIC, help="Topic for Cartesian commands (EEFDeltaCommand)")
     parser.add_argument("--state-feedback-topic", type=str, default="/isaac_joint_states", help="Topic for robot joint state feedback (JointState)")
     parser.add_argument("--joint-cmd-topic", type=str, default="/isaac_joint_commands", help="Topic for publishing joint commands")
     parser.add_argument("--cmd-msg-type", type=str, default="JointState", choices=["JointTrajectory", "JointState"], help="Output message type")
