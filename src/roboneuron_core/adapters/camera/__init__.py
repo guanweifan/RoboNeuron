@@ -24,7 +24,7 @@ def get_registry() -> dict[str, type[CameraWrapper]]:
 
 
 def _register_builtin_cameras() -> None:
-    from .dummy import DummyCameraWrapper
+    from .dummy_camera import DummyCameraWrapper
 
     register_camera("dummy", DummyCameraWrapper)
 
