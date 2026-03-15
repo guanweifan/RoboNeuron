@@ -102,7 +102,7 @@ def test_start_vla_inference_allows_dummy_without_model_path(monkeypatch) -> Non
             self._alive = False
 
     class FakeContext:
-        def Process(self, target=None, args=(), daemon=False) -> FakeProcess:
+        def Process(self, target=None, args=(), daemon=False) -> FakeProcess:  # noqa: N802
             return FakeProcess(target=target, args=args, daemon=daemon)
 
     monkeypatch.setattr(vla_server.multiprocessing, "get_context", lambda method: FakeContext())

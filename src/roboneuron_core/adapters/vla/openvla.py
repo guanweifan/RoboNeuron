@@ -1,141 +1,124 @@
-# wrappers/openvla.py
-import json
+from __future__ import annotations
+
 import logging
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 from PIL import Image
-from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor
 
-from third_party.vla_src.openvla.prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
-from third_party.vla_src.openvla.prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
-from third_party.vla_src.openvla.prismatic.extern.hf.processing_prismatic import (
-    PrismaticImageProcessor,
-    PrismaticProcessor,
-)
+from roboneuron_core.runtime.openvla_client import OpenVLASubprocessClient
 
 from .base import ModelWrapper
 
-# Register custom components for Hugging Face Auto classes
-AutoConfig.register("openvla", OpenVLAConfig)
-AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
-AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
-AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
-
-
-logger = logging.getLogger("wrappers.openvla")
+logger = logging.getLogger(__name__)
+_ORCHESTRATION_ONLY_PREDICT_KWARGS = {
+    "accel_method",
+    "accel_level",
+    "accel_config",
+    "prune_config",
+}
 
 
 class OpenVLAWrapper(ModelWrapper):
-    """
-    Wrapper for OpenVLA models using the Hugging Face Transformers interface.
+    """Thin adapter that proxies OpenVLA inference to a dedicated subprocess runtime."""
 
-    Handles model loading, prompt formatting, and prediction using the custom 
-    OpenVLA AutoModel components.
-    """
-    def __init__(self, 
-                 model_path: str | Path, 
-                 attn_implementation: str | None = "flash_attention_2", 
-                 dtype: torch.dtype | None = None, 
-                 **kwargs):
-        """
-        Initializes the OpenVLA wrapper instance.
-
-        Args:
-            model_path (Union[str, Path]): Path to the model files (local directory or HF hub ID).
-            attn_implementation (Optional[str]): Attention implementation mode (e.g., 'flash_attention_2').
-            dtype (Optional[torch.dtype]): The torch data type to use for model loading (defaults to torch.bfloat16).
-            **kwargs: Additional model loading configurations (e.g., low_cpu_mem_usage).
-        """
+    def __init__(
+        self,
+        model_path: str | Path,
+        attn_implementation: str | None = None,
+        dtype: torch.dtype | str | None = None,
+        default_unnorm_key: str | None = None,
+        runtime_python: str | Path | None = None,
+        runtime_module: str = "roboneuron_core.runtime.openvla_worker",
+        runtime_extra_python_paths: list[str] | tuple[str, ...] | None = None,
+        runtime_startup_timeout_sec: float = 900.0,
+        runtime_request_timeout_sec: float = 300.0,
+        runtime_device: str = "auto",
+        **kwargs: Any,
+    ) -> None:
         super().__init__(model_path, **kwargs)
         self.attn_implementation = attn_implementation
+        self.default_unnorm_key = default_unnorm_key
         self.torch_dtype = dtype or torch.bfloat16
+        self._runtime = OpenVLASubprocessClient(
+            model_path=self.model_path,
+            runtime_python=runtime_python,
+            runtime_module=runtime_module,
+            runtime_extra_python_paths=runtime_extra_python_paths,
+            startup_timeout_sec=runtime_startup_timeout_sec,
+            request_timeout_sec=runtime_request_timeout_sec,
+            attn_implementation=attn_implementation,
+            dtype=self._dtype_name(self.torch_dtype),
+            device=runtime_device,
+            low_cpu_mem_usage=self.kwargs.get("low_cpu_mem_usage", True),
+        )
 
-    def _get_prompt(self, instruction: str) -> str:
-        """
-        Constructs the appropriate VLA prompt based on the model version.
-        
-        Args:
-            instruction (str): The natural language task instruction.
-            
-        Returns:
-            str: The formatted instruction prompt string.
-        """
-        if "v01" in self.model_path:
-            # Chat template for older VLA versions (v01)
-            return (
-                "A chat between a curious user and an artificial intelligence assistant. "
-                "The assistant gives helpful, detailed, and polite answers to the user's questions. "
-                f"USER: What action should the robot take to {instruction.lower()}? ASSISTANT:"
-            )
-        # Default prompt format for newer VLA models
-        return f"In: What action should the robot take to {instruction.lower()}?\nOut:"
+    @staticmethod
+    def _dtype_name(dtype: torch.dtype | str) -> str:
+        if isinstance(dtype, str):
+            return dtype
+
+        mapping = {
+            torch.bfloat16: "bfloat16",
+            torch.float16: "float16",
+            torch.float32: "float32",
+        }
+        if dtype not in mapping:
+            raise ValueError(f"Unsupported OpenVLA runtime dtype: {dtype}")
+        return mapping[dtype]
 
     def load(self) -> None:
-        """
-        Loads the OpenVLA processor and model using Hugging Face Auto classes.
-        Attempts to load action normalization statistics from the local checkpoint path.
-        """
-        if AutoProcessor is None or AutoModelForVision2Seq is None:
-            raise RuntimeError("Required transformers AutoModelForVision2Seq / AutoProcessor failed to import.")
-            
-        logger.info(f"Loading OpenVLA processor and model from {self.model_path}")
-        
-        # Load Processor
-        self.processor = AutoProcessor.from_pretrained(self.model_path, trust_remote_code=True)
-        
-        # Load Model with specified configuration
-        self.model = AutoModelForVision2Seq.from_pretrained(
-            self.model_path,
-            attn_implementation=self.attn_implementation,
-            torch_dtype=self.torch_dtype,
-            low_cpu_mem_usage=self.kwargs.get("low_cpu_mem_usage", True),
-            trust_remote_code=False,
-        ).to(self.device)
-        
-        # Load normalization statistics for action un-normalization
-        local_path = Path(self.model_path)
-        if local_path.is_dir():
-            stats = local_path / "dataset_statistics.json"
-            if stats.exists():
-                try:
-                    with open(stats) as f:
-                        self.model.norm_stats = json.load(f)
-                except Exception:
-                    logger.warning("Failed to load dataset_statistics.json.")
+        logger.info("Starting OpenVLA subprocess runtime from %s", self.model_path)
+        self._runtime.load()
+        self.model = self._runtime
+        self.processor = True
 
-    def predict_action(self, 
-                       image: Image.Image, 
-                       instruction: str, 
-                       unnorm_key: str | None = None, 
-                       **kwargs) -> Any:
-        """
-        Performs inference to predict the next robot action.
+    def close(self) -> None:
+        self._runtime.close()
+        self.model = None
+        self.processor = None
 
-        Args:
-            image (Image.Image): The input visual observation.
-            instruction (str): The natural language task instruction.
-            unnorm_key (Optional[str]): Key for action un-normalization (optional).
-            **kwargs: Additional prediction parameters.
-
-        Returns:
-            Any: The predicted action, typically a NumPy array of continuous control values.
-            
-        Raises:
-            RuntimeError: If the model does not expose the required 'predict_action' API.
-        """
+    def _predict_request(
+        self,
+        *,
+        image: Image.Image,
+        instruction: str,
+        unnorm_key: str | None = None,
+        **predict_kwargs: Any,
+    ) -> np.ndarray:
         if self.model is None or self.processor is None:
             raise RuntimeError("Model or processor is not loaded. Call load() first.")
-            
-        prompt = self._get_prompt(instruction)
-        
-        # Prepare inputs (image and text)
-        inputs = self.processor(prompt, image).to(self.device, dtype=self.torch_dtype)
-        
-        # Perform inference using the model's custom method
-        if not hasattr(self.model, "predict_action"):
-            raise RuntimeError("Loaded OpenVLA model does not expose predict_action API.")
-            
-        action = self.model.predict_action(**inputs, unnorm_key=unnorm_key, do_sample=False)
-        return action
+
+        final_unnorm_key = unnorm_key if unnorm_key is not None else self.default_unnorm_key
+        runtime_predict_kwargs = {
+            key: value
+            for key, value in predict_kwargs.items()
+            if key not in _ORCHESTRATION_ONLY_PREDICT_KWARGS
+        }
+        return self._runtime.predict_action(
+            image=image,
+            instruction=instruction,
+            unnorm_key=final_unnorm_key,
+            extra_predict_kwargs=runtime_predict_kwargs,
+        )
+
+    def predict_action(
+        self,
+        image: Image.Image,
+        instruction: str,
+        unnorm_key: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        return self._predict_request(
+            image=image,
+            instruction=instruction,
+            unnorm_key=unnorm_key,
+            **kwargs,
+        )
+
+    def __del__(self) -> None:
+        with suppress(Exception):
+            self.close()

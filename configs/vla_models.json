@@ -1,5 +1,11 @@
 {
-    "openvla": "/path/to/your/openvla/model",
+    "openvla": {
+        "path": "checkpoints/openvla/openvla-7b",
+        "runtime_python": ".venvs/openvla/bin/python",
+        "attn_implementation": "flash_attention_2",
+        "default_unnorm_key": "bridge_orig",
+        "runtime_startup_timeout_sec": 900
+    },
     "openvla-oft": "/path/to/your/openvla-oft/model",
     "pi0": "/path/to/your/pi0/model"
 }

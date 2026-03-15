@@ -1,4 +1,5 @@
-# wrappers/openvla_fastv.py
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any
 
@@ -20,8 +21,8 @@ class OpenVLAFastVWrapper(OpenVLAWrapper):
         model_path: str | Path,
         *,
         default_fastv_config: dict[str, Any] | None = None,
-        attn_implementation: str | None = "flash_attention_2",
-        dtype: torch.dtype | None = None,
+        attn_implementation: str | None = None,
+        dtype: torch.dtype | str | None = None,
         **kwargs,
     ):
         """
@@ -36,7 +37,7 @@ class OpenVLAFastVWrapper(OpenVLAWrapper):
         """
         # Store default FastV config if provided
         if default_fastv_config is not None:
-             kwargs["fastv_config"] = default_fastv_config
+            kwargs["fastv_config"] = default_fastv_config
 
         super().__init__(
             model_path=model_path,
@@ -46,15 +47,6 @@ class OpenVLAFastVWrapper(OpenVLAWrapper):
         )
         # Store FastV config as an instance attribute for easy access/override
         self.fastv_config: dict[str, Any] | None = kwargs.get("fastv_config")
-
-
-    def load(self) -> None:
-        """
-        Loads the model and processor using the base OpenVLA logic, then sets the model to evaluation mode.
-        """
-        super().load()
-        self.model.eval()
-
 
     def predict_action(
         self,
@@ -88,27 +80,19 @@ class OpenVLAFastVWrapper(OpenVLAWrapper):
         Returns:
             Any: The predicted action output.
         """
-        prompt = self._get_prompt(instruction)
-        inputs = self.processor(prompt, image).to(self.device, dtype=self.torch_dtype)
-
-        if not hasattr(self.model, "predict_action"):
-            raise RuntimeError("Loaded OpenVLA model does not expose predict_action API")
-
-        # Determine final denormalization key (default_unnorm_key is assumed to be defined by the base class)
-        final_unnorm_key = unnorm_key if unnorm_key is not None else getattr(self, "default_unnorm_key", None)
+        final_unnorm_key = unnorm_key if unnorm_key is not None else self.default_unnorm_key
 
         # Logic for determining the FastV configuration
         if fastv_config is None and accel_method == "fastv":
             fastv_config = accel_config
 
-        final_fastv_config = fastv_config if fastv_config is not None else getattr(self, "fastv_config", None)
+        final_fastv_config = fastv_config if fastv_config is not None else self.fastv_config
 
-        action = self.model.predict_action(
-            **inputs,
+        return self._predict_request(
+            image=image,
+            instruction=instruction,
             unnorm_key=final_unnorm_key,
-            do_sample=False,
             fastv_config=final_fastv_config,
-            prune_config=prune_config,  
+            prune_config=prune_config,
             **kwargs,
         )
-        return action
