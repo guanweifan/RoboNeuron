@@ -14,27 +14,21 @@ Acceleration Design Parameters:
 
 import json
 import multiprocessing
-import time
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 import json_numpy
-import rclpy
 import torch
-from cv_bridge import CvBridge
 from mcp.server.fastmcp import FastMCP
 from PIL import Image
-from rclpy.node import Node
-from roboneuron_interfaces.msg import EEFDeltaCommand
-from sensor_msgs.msg import Image as RosImage
 
 # Ensure wrapper imports are available
 from roboneuron_core.adapters.vla import get_registry
 from roboneuron_core.adapters.vla.dummy_vla import DUMMY_MODEL_PATH
-from roboneuron_core.utils.eef_delta import EEF_DELTA_CMD_TOPIC, array_to_eef_delta_command
 
 _VLA_PROCESS: multiprocessing.Process | None = None
+EEF_DELTA_CMD_TOPIC = "/eef_delta_cmd"
 mcp = FastMCP("robomcp-vla")
 
 
@@ -113,10 +107,15 @@ def resolve_accel_configs(
 
 
 # ---------- vla model list loader ----------
-def _load_vla_models_config() -> dict[str, str]:
+def _load_vla_models_config() -> dict[str, dict[str, Any]]:
     """
-    Loads model-name -> model-path mapping from 'configs/vla_models.json'.
-    Returns a dict mapping model_name -> model_path.
+    Loads model-name -> normalized model configuration from 'configs/vla_models.json'.
+
+    Each entry is normalized to:
+        {
+            "path": <str>,
+            "kwargs": <dict[str, Any]>,
+        }
 
     Raises FileNotFoundError or ValueError on bad format.
     """
@@ -127,14 +126,18 @@ def _load_vla_models_config() -> dict[str, str]:
     with cfg_path.open("r", encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, dict):
-        raise ValueError(f"vla_models.json must be a JSON object mapping names->paths, got {type(data)}")
-    # allow simple nested objects but prefer string path values
-    models: dict[str, str] = {}
+        raise ValueError(f"vla_models.json must be a JSON object mapping names->configs, got {type(data)}")
+
+    models: dict[str, dict[str, Any]] = {}
     for k, v in data.items():
         if isinstance(v, str):
-            models[k] = v
-        elif isinstance(v, dict) and "path" in v and isinstance(v["path"], str):
-            models[k] = v["path"]
+            models[k] = {"path": v, "kwargs": {}}
+        elif isinstance(v, dict) and isinstance(v.get("path"), str):
+            wrapper_kwargs = dict(v.get("kwargs", {})) if isinstance(v.get("kwargs", {}), dict) else {}
+            for key, value in v.items():
+                if key not in {"path", "kwargs"}:
+                    wrapper_kwargs[key] = value
+            models[k] = {"path": v["path"], "kwargs": wrapper_kwargs}
         else:
             # ignore malformed entries
             continue
@@ -142,131 +145,213 @@ def _load_vla_models_config() -> dict[str, str]:
 # ---------- end ----------
 
 
-def _resolve_model_path(model_name: str, model_path: str | None) -> str:
-    """Resolve model path while allowing dummy adapters to run without checkpoints."""
-    if model_path:
-        return model_path
-    if model_name == "dummy":
-        return DUMMY_MODEL_PATH
+def _resolve_model_spec(model_name: str, model_path: str | None) -> tuple[str, dict[str, Any]]:
+    """Resolve model path and wrapper kwargs while allowing dummy adapters to run without checkpoints."""
+    if model_name == "dummy" and not model_path:
+        return DUMMY_MODEL_PATH, {}
 
     models_cfg = _load_vla_models_config()
-    resolved = models_cfg.get(model_name)
-    if not resolved:
+    cfg_entry = models_cfg.get(model_name)
+
+    if model_path:
+        return model_path, dict(cfg_entry.get("kwargs", {})) if isinstance(cfg_entry, dict) else {}
+
+    if not isinstance(cfg_entry, dict):
         raise ValueError(
             f"model_path not provided and model '{model_name}' not found in configs/vla_models.json."
             " Create configs/vla_models.json with a mapping or pass --model-path."
         )
-    return resolved
+    return str(cfg_entry["path"]), dict(cfg_entry.get("kwargs", {}))
 
 
 # ================= ROS Node ================= #
 
-class VLAServerNode(Node):
-    """
-    ROS2 Node implementing the VLA inference loop.
+def _load_ros_runtime() -> tuple[Any, type[Any]]:
+    try:
+        import rclpy
+        from cv_bridge import CvBridge
+        from rclpy.node import Node
+        from roboneuron_interfaces.msg import EEFDeltaCommand
+        from sensor_msgs.msg import Image as RosImage
 
-    It loads the VLA model, subscribes to an image topic, performs inference,
-    and publishes the resulting action command.
-    """
-    def __init__(
-        self,
-        model_name: str,
-        model_path: str,
-        input_topic: str,
-        output_topic: str,
-        accel_method: str = "none",
-        accel_level: str = "off",
-        instruction: str = "do task",
-    ):
-        super().__init__("vla_server_node")
-        self._device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+        from roboneuron_core.utils.eef_delta import array_to_eef_delta_command
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "ROS Python packages are not available in this interpreter. "
+            "Source `/opt/ros/humble/setup.bash` and your ROS workspace, and do not overwrite "
+            "`PYTHONPATH`. Use `PYTHONPATH=src:$PYTHONPATH` or run "
+            "`python -m roboneuron_core.servers.vla_server` from the repo root."
+        ) from exc
 
-        self._accel_method = accel_method
-        self._accel_level = accel_level
-        self._instruction = instruction
+    class VLAServerNode(Node):
+        """
+        ROS2 Node implementing the VLA inference loop.
 
-        # 1) Resolve Acceleration Configuration
-        try:
-            self._method_config, self._prune_config = resolve_accel_configs(
-                model_name=model_name,
-                accel_method=accel_method,
-                accel_level=accel_level,
-            )
-        except Exception as e:
-            self.get_logger().error(f"Failed to resolve accel configs: {e}")
-            self._method_config = None
-            self._prune_config = None
+        It loads the VLA model, subscribes to an image topic, performs inference,
+        and publishes the resulting action command.
+        """
 
-        # 2) Load Model Wrapper
-        json_numpy.patch()
-        registry = get_registry()
-        wrapper_class = registry[model_name]
-        wrapper_kwargs = {
-            "device": self._device,
-            "accel_method": accel_method,
-            "accel_level": accel_level,
-        }
-        self._model = wrapper_class(model_path, **wrapper_kwargs)
-        self._model.load()
+        def __init__(
+            self,
+            model_name: str,
+            model_path: str,
+            model_kwargs: dict[str, Any] | None,
+            input_topic: str,
+            output_topic: str,
+            accel_method: str = "none",
+            accel_level: str = "off",
+            instruction: str = "do task",
+        ):
+            super().__init__("vla_server_node")
+            self._device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 
-        # Self-Test for model and acceleration setup
-        try:
-            import numpy as np
-            dummy_img = Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8))
+            self._accel_method = accel_method
+            self._accel_level = accel_level
+            self._instruction = instruction
+
+            try:
+                self._method_config, self._prune_config = resolve_accel_configs(
+                    model_name=model_name,
+                    accel_method=accel_method,
+                    accel_level=accel_level,
+                )
+            except Exception as e:
+                self.get_logger().error(f"Failed to resolve accel configs: {e}")
+                self._method_config = None
+                self._prune_config = None
+
+            json_numpy.patch()
+            registry = get_registry()
+            wrapper_class = registry[model_name]
+            wrapper_kwargs = {
+                "device": self._device,
+                "accel_method": accel_method,
+                "accel_level": accel_level,
+            }
+            if model_kwargs:
+                wrapper_kwargs.update(model_kwargs)
+            self._model = wrapper_class(model_path, **wrapper_kwargs)
+            self._model.load()
+
+            try:
+                import numpy as np
+
+                dummy_img = Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8))
+                self.get_logger().info(
+                    f"[SelfTest] accel_method={self._accel_method}, "
+                    f"accel_config={self._method_config}, "
+                    f"prune_config={self._prune_config}"
+                )
+
+                action = self._model.predict_action(
+                    image=dummy_img,
+                    instruction=self._instruction,
+                    accel_method=self._accel_method,
+                    accel_config=self._method_config,
+                    prune_config=self._prune_config,
+                )
+                self.get_logger().info(f"[SelfTest] dummy action shape={getattr(action, 'shape', None)}")
+            except Exception as e:
+                self.get_logger().error(f"[SelfTest] dummy predict_action failed: {e}")
+
+            self._cv_bridge = CvBridge()
+            self._sub = self.create_subscription(RosImage, input_topic, self._image_cb, 10)
+            self._pub = self.create_publisher(EEFDeltaCommand, output_topic, 10)
 
             self.get_logger().info(
-                f"[SelfTest] accel_method={self._accel_method}, "
-                f"accel_config={self._method_config}, "
-                f"prune_config={self._prune_config}"
+                f"VLA Model {model_name} listening on {input_topic} "
+                f"(accel_method={accel_method}, accel_level={accel_level})"
             )
 
-            action = self._model.predict_action(
-                image=dummy_img,
-                instruction=self._instruction,
-                accel_method=self._accel_method,
-                accel_config=self._method_config,
-                prune_config=self._prune_config,
-            )
+        def _image_cb(self, msg: RosImage) -> None:
+            """Receives an image, performs VLA inference, and publishes the action."""
+            try:
+                cv_img = self._cv_bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
+                pil_img = Image.fromarray(cv_img)
 
-            self.get_logger().info(f"[SelfTest] dummy action shape={getattr(action, 'shape', None)}")
-        except Exception as e:
-            self.get_logger().error(f"[SelfTest] dummy predict_action failed: {e}")
+                action = self._model.predict_action(
+                    image=pil_img,
+                    instruction=self._instruction,
+                    accel_method=self._accel_method,
+                    accel_config=self._method_config,
+                    prune_config=self._prune_config,
+                )
 
-        # 3) ROS Subscription / Publication Setup
-        self._cv_bridge = CvBridge()
-        self._sub = self.create_subscription(RosImage, input_topic, self._image_cb, 10)
-        self._pub = self.create_publisher(EEFDeltaCommand, output_topic, 10)
+                if action is not None:
+                    out_msg = array_to_eef_delta_command(action.flatten().tolist())
+                    self._pub.publish(out_msg)
+            except Exception:
+                pass
 
-        self.get_logger().info(
-            f"VLA Model {model_name} listening on {input_topic} "
-            f"(accel_method={accel_method}, accel_level={accel_level})"
+    return rclpy, VLAServerNode
+
+
+def _run_local_test(
+    model_name: str,
+    model_path: str | None,
+    instruction: str,
+    accel_method: str,
+    accel_level: str,
+) -> int:
+    import numpy as np
+
+    registry = get_registry()
+    if model_name not in registry:
+        print(f"Error: model '{model_name}' not found in registry.")
+        return 1
+
+    try:
+        resolved_model_path, model_kwargs = _resolve_model_spec(model_name, model_path)
+    except Exception as exc:
+        print(f"Error: failed to resolve model spec: {exc}")
+        return 1
+
+    try:
+        method_config, prune_config = resolve_accel_configs(
+            model_name=model_name,
+            accel_method=accel_method,
+            accel_level=accel_level,
         )
+    except Exception as exc:
+        print(f"Warning: failed to resolve accel config, continuing without it: {exc}")
+        method_config, prune_config = None, None
 
-    def _image_cb(self, msg: RosImage) -> None:
-        """Receives an image, performs VLA inference, and publishes the action."""
-        try:
-            cv_img = self._cv_bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
-            pil_img = Image.fromarray(cv_img)
+    wrapper_class = registry[model_name]
+    wrapper_kwargs = {
+        "device": torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu"),
+        "accel_method": accel_method,
+        "accel_level": accel_level,
+    }
+    wrapper_kwargs.update(model_kwargs)
+    model = wrapper_class(resolved_model_path, **wrapper_kwargs)
 
-            action = self._model.predict_action(
-                image=pil_img,
-                instruction=self._instruction,
-                accel_method=self._accel_method,
-                accel_config=self._method_config,
-                prune_config=self._prune_config,
-            )
-
-            if action is not None:
-                out_msg = array_to_eef_delta_command(action.flatten().tolist())
-                self._pub.publish(out_msg)
-        except Exception:
-            # Silence internal errors to keep the node running
-            pass
+    print(f"LOCAL TEST MODE: loading {model_name} from {resolved_model_path}")
+    try:
+        model.load()
+        dummy_img = Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8))
+        action = model.predict_action(
+            image=dummy_img,
+            instruction=instruction,
+            accel_method=accel_method,
+            accel_config=method_config,
+            prune_config=prune_config,
+        )
+        print(f"Local test succeeded. action shape={getattr(action, 'shape', None)} action={action}")
+        return 0
+    except Exception as exc:
+        print(f"Local test failed: {type(exc).__name__}: {exc}")
+        return 1
+    finally:
+        with suppress(Exception):
+            close = getattr(model, "close", None)
+            if callable(close):
+                close()
 
 
 def _ros_worker(
     model_name: str,
     model_path: str,
+    model_kwargs: dict[str, Any] | None,
     input_topic: str,
     output_topic: str,
     accel_method: str,
@@ -274,10 +359,12 @@ def _ros_worker(
     instruction: str,
 ):
     """Multiprocessing worker function to initialize and run the VLA inference node."""
+    rclpy, vla_server_node_class = _load_ros_runtime()
     rclpy.init()
-    node = VLAServerNode(
+    node = vla_server_node_class(
         model_name,
         model_path,
+        model_kwargs,
         input_topic,
         output_topic,
         accel_method,
@@ -339,11 +426,16 @@ def start_vla_inference(
         return f"Error: failed to access model registry: {e}"
 
     try:
-        model_path = _resolve_model_path(model_name, model_path)
+        model_path, model_kwargs = _resolve_model_spec(model_name, model_path)
     except ValueError as exc:
         return f"Error: {exc}"
     except Exception as e:
         return f"Error: failed to load vla models config: {e}"
+
+    try:
+        _load_ros_runtime()
+    except RuntimeError as exc:
+        return f"Error: {exc}"
 
     # Validate acceleration method and level
     valid_methods = {"none", "fastv"}
@@ -364,7 +456,7 @@ def start_vla_inference(
     ctx = multiprocessing.get_context("spawn")
     _VLA_PROCESS = ctx.Process(
         target=_ros_worker,
-        args=(model_name, model_path, input_topic, output_topic, accel_method, accel_level, instruction),
+        args=(model_name, model_path, model_kwargs, input_topic, output_topic, accel_method, accel_level, instruction),
         daemon=False,
     )
     _VLA_PROCESS.start()
@@ -395,7 +487,6 @@ def stop_vla_inference() -> str:
 if __name__ == "__main__":
     # Local test harness
     import argparse
-    import select
     import sys
 
     parser = argparse.ArgumentParser(description="vla_server.py local test harness")
@@ -410,39 +501,15 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.local_test:
-        print("LOCAL TEST MODE: attempting to start VLA worker (spawn)...")
-        res = start_vla_inference(
-            args.model_name,
-            args.model_path,
-            args.instruction,
-            args.input_topic,
-            args.output_topic,
-            args.accel_method,
-            args.accel_level,
+        sys.exit(
+            _run_local_test(
+                args.model_name,
+                args.model_path,
+                args.instruction,
+                args.accel_method,
+                args.accel_level,
+            )
         )
-        print(res)
-        if res.startswith("Error"):
-            sys.exit(1)
-
-        try:
-            print("VLA worker started. Press Ctrl-C to stop, or type 'stop' + Enter.")
-            while True:
-                time.sleep(0.5)
-                # Check process liveness
-                if _VLA_PROCESS is None or not _VLA_PROCESS.is_alive():
-                    print("VLA process exited.")
-                    break
-                # simple stdin check
-                if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
-                    line = sys.stdin.readline().strip()
-                    if line.lower() in ("stop", "q", "quit", "exit"):
-                        print("Stop command received.")
-                        break
-        except KeyboardInterrupt:
-            print("\nKeyboardInterrupt received, stopping VLA...")
-        finally:
-            print(stop_vla_inference())
-            print("Local test finished.")
     else:
         # Run as an MCP service
         mcp.run()

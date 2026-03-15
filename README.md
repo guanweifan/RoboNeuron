@@ -213,17 +213,41 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
 }
 ```
 
-### Step 6: Configure VLA Models
+### Step 6: Set Up the Dedicated OpenVLA Runtime
 
-Edit `configs/vla_models.json` to specify paths to your VLA model checkpoints:
+OpenVLA now runs in its own Python environment instead of the main RoboNeuron environment. This keeps the primary `uv sync` environment minimal and isolates model-specific dependencies such as `transformers`, `flash-attn`, and vendored `prismatic`.
+
+Create the runtime with:
+
+```bash
+bash scripts/setup_openvla_runtime.sh
+```
+
+By default this creates `.venvs/openvla` and installs:
+
+- `torch==2.2.0`, `torchvision==0.17.0`, `torchaudio==2.2.0` from the CUDA 11.8 PyTorch index
+- the minimal OpenVLA inference dependencies
+- the local `flash_attn` wheel if `flash_attn-*.whl` exists at the repository root
+
+### Step 7: Configure VLA Models
+
+Edit `configs/vla_models.json` to specify model checkpoints and runtime configuration. String values are still supported for simple models, but OpenVLA should use the richer object form:
 
 ```json
 {
-  "openvla": "/path/to/your/openvla/model",
+  "openvla": {
+    "path": "checkpoints/openvla/openvla-7b",
+    "runtime_python": ".venvs/openvla/bin/python",
+    "attn_implementation": "flash_attention_2",
+    "default_unnorm_key": "bridge_orig",
+    "runtime_startup_timeout_sec": 900
+  },
   "openvla-oft": "/path/to/your/openvla-oft/model",
   "pi0": "/path/to/your/pi0/model"
 }
 ```
+
+When `model_path` is omitted from `start_vla_inference`, RoboNeuron resolves both the checkpoint path and the runtime-specific kwargs from this config file.
 
 ### Optional Components Added in Current Mainline
 
