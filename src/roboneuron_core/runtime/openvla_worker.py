@@ -10,7 +10,7 @@ from typing import Any
 
 import torch
 from prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
-from prismatic.extern.hf.processing_prismatic import PrismaticProcessor
+from prismatic.extern.hf.processing_prismatic import PrismaticImageProcessor, PrismaticProcessor
 
 from .openvla_protocol import build_openvla_prompt, decode_image_from_base64, to_jsonable_action
 
@@ -62,7 +62,7 @@ class OpenVLAWorker:
         device_name: str,
         low_cpu_mem_usage: bool,
     ) -> None:
-        self.model_path = model_path
+        self.model_path = str(Path(model_path).expanduser().resolve(strict=False))
         self.low_cpu_mem_usage = low_cpu_mem_usage
 
         if device_name == "auto":
@@ -78,23 +78,33 @@ class OpenVLAWorker:
     def load(self) -> None:
         logger.info("Loading OpenVLA runtime from %s on %s", self.model_path, self.device)
 
-        self.processor = PrismaticProcessor.from_pretrained(
-            self.model_path,
-            trust_remote_code=True,
-        )
+        self.processor = self._load_processor()
         self.model = OpenVLAForActionPrediction.from_pretrained(
             self.model_path,
             attn_implementation=self.attn_implementation,
             torch_dtype=self.torch_dtype,
             low_cpu_mem_usage=self.low_cpu_mem_usage,
-            trust_remote_code=True,
+            local_files_only=True,
         )
-        self.model = self.model.to(self.device)
+        self.model = self.model.to(self.device, dtype=self.torch_dtype)
 
         stats_path = Path(self.model_path) / "dataset_statistics.json"
         if stats_path.is_file():
             with stats_path.open("r", encoding="utf-8") as handle:
                 self.model.norm_stats = json.load(handle)
+
+    def _load_processor(self) -> PrismaticProcessor:
+        from transformers import AutoTokenizer
+
+        image_processor = PrismaticImageProcessor.from_pretrained(
+            self.model_path,
+            local_files_only=True,
+        )
+        tokenizer = AutoTokenizer.from_pretrained(
+            self.model_path,
+            local_files_only=True,
+        )
+        return PrismaticProcessor(image_processor=image_processor, tokenizer=tokenizer)
 
     def predict_action(
         self,

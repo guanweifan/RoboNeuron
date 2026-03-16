@@ -223,11 +223,20 @@ Create the runtime with:
 bash scripts/setup_openvla_runtime.sh
 ```
 
+For `openvla-oft`, create the separate runtime with:
+
+```bash
+bash scripts/setup_openvla_oft_runtime.sh
+```
+
 By default this creates `.venvs/openvla` and installs:
 
 - `torch==2.2.0`, `torchvision==0.17.0`, `torchaudio==2.2.0` from the CUDA 11.8 PyTorch index
 - the minimal OpenVLA inference dependencies
 - the local `flash_attn` wheel if `flash_attn-*.whl` exists at the repository root
+
+The `openvla-oft` runtime keeps the same PyTorch / FlashAttention versions as `openvla`, but adds the extra
+dependencies needed by the OFT action heads and proprio projector.
 
 ### Step 7: Configure VLA Models
 
@@ -242,12 +251,30 @@ Edit `configs/vla_models.json` to specify model checkpoints and runtime configur
     "default_unnorm_key": "bridge_orig",
     "runtime_startup_timeout_sec": 900
   },
-  "openvla-oft": "/path/to/your/openvla-oft/model",
+  "openvla-oft": {
+    "path": "checkpoints/openvla-oft/openvla-oft-pick-banana",
+    "runtime_python": ".venvs/openvla-oft/bin/python",
+    "attn_implementation": "flash_attention_2",
+    "default_unnorm_key": "vr_banana",
+    "runtime_startup_timeout_sec": 1800,
+    "robot_platform": "bridge",
+    "use_film": true,
+    "use_proprio": true,
+    "num_images_in_input": 1,
+    "default_proprio": [0, 0, 0, 0, 0, 0, 0]
+  },
   "pi0": "/path/to/your/pi0/model"
 }
 ```
 
 When `model_path` is omitted from `start_vla_inference`, RoboNeuron resolves both the checkpoint path and the runtime-specific kwargs from this config file.
+
+`openvla-oft` also ships with an integration smoke test that targets `checkpoints/openvla-oft/openvla-oft-pick-banana`.
+After the dedicated runtime is ready, run:
+
+```bash
+pytest -q tests/test_openvla_oft_deploy_smoke.py -m integration
+```
 
 ### Optional Components Added in Current Mainline
 

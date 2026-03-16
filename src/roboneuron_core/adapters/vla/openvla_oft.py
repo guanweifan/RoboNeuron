@@ -1,11 +1,7 @@
-"""
-openvla_oft_wrapper.py
-"""
 from __future__ import annotations
 
 import logging
-import traceback
-from dataclasses import dataclass
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -13,175 +9,181 @@ import numpy as np
 import torch
 from PIL import Image
 
-# Import VLA specific utilities
-# Ensure these paths match your actual project structure
-from third_party.vla_src.openvla_oft.experiments.robot.openvla_utils import (
-    get_action_head,
-    get_processor,
-    get_proprio_projector,
-    get_vla,
-    get_vla_action,
-)
-from third_party.vla_src.openvla_oft.experiments.robot.robot_utils import get_image_resize_size
-from third_party.vla_src.openvla_oft.prismatic.vla.constants import PROPRIO_DIM
+from roboneuron_core.runtime.openvla_oft_client import OpenVLAOFTSubprocessClient
 
-# Assumed location of the abstract base class provided in your prompt
 from .base import ModelWrapper
+
+logger = logging.getLogger(__name__)
+_ORCHESTRATION_ONLY_PREDICT_KWARGS = {
+    "accel_method",
+    "accel_level",
+    "accel_config",
+    "prune_config",
+}
 
 
 class OpenVLAOFTWrapper(ModelWrapper):
-    """
-    Implementation of the VLA wrapper for the OpenVLA-OFT model family.
-    Encapsulates configuration, loading, and inference logic.
-    """
+    """Thin adapter that proxies OpenVLA-OFT inference to a dedicated subprocess runtime."""
 
-    @dataclass
-    class Config:
-        """
-        Internal configuration for OpenVLA model parameters.
-        Defaults match the original DeployConfig.
-        """
-        model_family: str = "openvla"
-        pretrained_checkpoint: str | Path | None = None
-        
-        use_l1_regression: bool = True
-        use_diffusion: bool = False
-        use_film: bool = True
-        use_proprio: bool = True
-        use_relative_actions: bool = False
-        
-        num_images_in_input: int = 2
-        lora_rank: int = 32
-        num_diffusion_steps_inference: int = 50
-        
-        center_crop: bool = True
-        unnorm_key: str | Path = "franka_kitchen"
-        
-        load_in_8bit: bool = False
-        load_in_4bit: bool = False
+    def __init__(
+        self,
+        model_path: str | Path,
+        attn_implementation: str | None = None,
+        dtype: torch.dtype | str | None = None,
+        default_unnorm_key: str | None = None,
+        runtime_python: str | Path | None = None,
+        runtime_module: str = "roboneuron_core.runtime.openvla_oft_worker",
+        runtime_extra_python_paths: list[str] | tuple[str, ...] | None = None,
+        runtime_startup_timeout_sec: float = 1800.0,
+        runtime_request_timeout_sec: float = 300.0,
+        runtime_device: str = "auto",
+        use_l1_regression: bool | None = None,
+        use_diffusion: bool | None = None,
+        use_film: bool | None = None,
+        use_proprio: bool | None = None,
+        num_images_in_input: int | None = None,
+        num_diffusion_steps_inference: int = 50,
+        lora_rank: int = 32,
+        center_crop: bool = True,
+        robot_platform: str | None = None,
+        default_proprio: list[float] | tuple[float, ...] | np.ndarray | None = None,
+        base_model_path: str | Path | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model_path, **kwargs)
+        self.attn_implementation = attn_implementation
+        self.default_unnorm_key = default_unnorm_key
+        self.torch_dtype = dtype or torch.bfloat16
+        self._runtime = OpenVLAOFTSubprocessClient(
+            model_path=self.model_path,
+            runtime_python=runtime_python,
+            runtime_module=runtime_module,
+            runtime_extra_python_paths=runtime_extra_python_paths,
+            startup_timeout_sec=runtime_startup_timeout_sec,
+            request_timeout_sec=runtime_request_timeout_sec,
+            attn_implementation=attn_implementation,
+            dtype=self._dtype_name(self.torch_dtype),
+            device=runtime_device,
+            low_cpu_mem_usage=self.kwargs.get("low_cpu_mem_usage", True),
+            use_l1_regression=use_l1_regression,
+            use_diffusion=use_diffusion,
+            use_film=use_film,
+            use_proprio=use_proprio,
+            num_images_in_input=num_images_in_input,
+            num_diffusion_steps_inference=num_diffusion_steps_inference,
+            lora_rank=lora_rank,
+            center_crop=center_crop,
+            unnorm_key=default_unnorm_key,
+            robot_platform=robot_platform,
+            default_proprio=default_proprio,
+            base_model_path=base_model_path,
+        )
 
-    def __init__(self, model_path: str | Path, device: torch.device | None = None, **kwargs):
-        super().__init__(model_path, device=device, **kwargs)
-        
-        # Initialize config: allow override via kwargs, otherwise use defaults
-        self.cfg = self.Config(**{k: v for k, v in kwargs.items() if k in self.Config.__annotations__})
-        
-        # Override checkpoint path if explicitly provided in __init__ arguments
-        if model_path:
-            self.cfg.pretrained_checkpoint = str(model_path)
+    @staticmethod
+    def _dtype_name(dtype: torch.dtype | str) -> str:
+        if isinstance(dtype, str):
+            return dtype
 
-        # Placeholders
-        self.vla = None
-        self.proprio_projector = None
-        self.action_head = None
-        self.resize_size = None
+        mapping = {
+            torch.bfloat16: "bfloat16",
+            torch.float16: "float16",
+            torch.float32: "float32",
+        }
+        if dtype not in mapping:
+            raise ValueError(f"Unsupported OpenVLA-OFT runtime dtype: {dtype}")
+        return mapping[dtype]
 
     def load(self) -> None:
-        """
-        Loads the VLA model, processor, action head, and projectors onto the device.
-        """
-        logging.info(f"Loading OpenVLA-OFT model from: {self.cfg.pretrained_checkpoint}")
+        logger.info("Starting OpenVLA-OFT subprocess runtime from %s", self.model_path)
+        self._runtime.load()
+        self.model = self._runtime
+        self.processor = True
 
-        self.vla = get_vla(self.cfg)
+    def close(self) -> None:
+        self._runtime.close()
+        self.model = None
+        self.processor = None
 
-        if self.cfg.use_proprio:
-            self.proprio_projector = get_proprio_projector(
-                self.cfg, self.vla.llm_dim, PROPRIO_DIM
-            )
+    def _build_observation(
+        self,
+        image: Image.Image | list[Image.Image] | dict[str, Any],
+        instruction: str,
+        **predict_kwargs: Any,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        runtime_predict_kwargs = {
+            key: value
+            for key, value in predict_kwargs.items()
+            if key not in _ORCHESTRATION_ONLY_PREDICT_KWARGS
+        }
 
-        if self.cfg.use_l1_regression or self.cfg.use_diffusion:
-            self.action_head = get_action_head(self.cfg, self.vla.llm_dim)
+        if isinstance(image, dict):
+            observation = dict(image)
+        else:
+            images = list(image) if isinstance(image, list) else [image]
+            observation: dict[str, Any] = {}
+            if images:
+                observation["full_image"] = images[0]
+            if len(images) == 2:
+                observation["wrist_image"] = images[1]
+            elif len(images) >= 3:
+                observation["left_wrist_image"] = images[1]
+                observation["right_wrist_image"] = images[2]
+                if len(images) > 3:
+                    observation["images"] = images
 
-        self.processor = get_processor(self.cfg)
+        if "instruction" not in observation:
+            observation["instruction"] = instruction
 
-        self.resize_size = get_image_resize_size(self.cfg)
+        for source_key, target_key in (("proprio", "state"), ("state", "state")):
+            if source_key in runtime_predict_kwargs and "state" not in observation:
+                observation[target_key] = runtime_predict_kwargs.pop(source_key)
 
-        if self.device.type != "cpu":
-            self.vla.to(self.device)
-            if self.proprio_projector:
-                self.proprio_projector.to(self.device)
-            if self.action_head:
-                self.action_head.to(self.device)
+        if "images" not in observation and "wrist_images" in runtime_predict_kwargs:
+            wrist_images = list(runtime_predict_kwargs.pop("wrist_images"))
+            full_image = observation.pop("full_image", None)
+            if full_image is not None:
+                observation["images"] = [full_image, *wrist_images]
 
-        self.model = self.vla
-        logging.info("OpenVLA-OFT model loaded successfully.")
+        return observation, runtime_predict_kwargs
 
-    def _prepare_image(self, image: Image.Image) -> np.ndarray:
-        """
-        Resizes and converts PIL Image to (H, W, C) numpy array (uint8).
-        """
-        if self.resize_size is not None:
-            # resize expects (width, height)
-            image = image.resize((self.resize_size[1], self.resize_size[0]))
-        
-        arr = np.asarray(image)
-        
-        if arr.ndim == 2:
-            arr = np.stack([arr] * 3, axis=-1)
-        if arr.shape[2] == 4:
-            arr = arr[..., :3]
-            
-        return arr
+    def _predict_request(
+        self,
+        *,
+        image: Image.Image | list[Image.Image] | dict[str, Any],
+        instruction: str,
+        unnorm_key: str | None = None,
+        **predict_kwargs: Any,
+    ) -> np.ndarray:
+        if self.model is None or self.processor is None:
+            raise RuntimeError("Model or processor is not loaded. Call load() first.")
+
+        final_unnorm_key = unnorm_key if unnorm_key is not None else self.default_unnorm_key
+        observation, runtime_predict_kwargs = self._build_observation(
+            image=image,
+            instruction=instruction,
+            **predict_kwargs,
+        )
+        return self._runtime.predict_action(
+            observation=observation,
+            instruction=instruction,
+            unnorm_key=final_unnorm_key,
+            extra_predict_kwargs=runtime_predict_kwargs,
+        )
 
     def predict_action(
-        self, 
-        image: Image.Image | list[Image.Image] | dict[str, Any], 
-        instruction: str | None = None, 
-        unnorm_key: str | None = None, 
-        **kwargs
+        self,
+        image: Image.Image | list[Image.Image] | dict[str, Any],
+        instruction: str,
+        unnorm_key: str | None = None,
+        **kwargs: Any,
     ) -> Any:
-        """
-        Performs inference to predict robot actions.
-        
-        Args:
-            image: Single PIL Image, List of PIL Images, or pre-formed observation dict.
-            instruction: Natural language instruction.
-            unnorm_key: Specific key for action un-normalization.
-            **kwargs: Can include 'proprio' (np.ndarray) for robot state.
-        """
-        if self.model is None:
-            raise RuntimeError("Model is not loaded. Please call load() first.")
+        return self._predict_request(
+            image=image,
+            instruction=instruction,
+            unnorm_key=unnorm_key,
+            **kwargs,
+        )
 
-        observation: dict[str, Any] = {}
-        
-        if isinstance(image, dict):
-            observation = image
-            if "instruction" not in observation and instruction:
-                observation["instruction"] = instruction
-        else:
-            images_list = image if isinstance(image, list) else [image]
-            
-            if len(images_list) != self.cfg.num_images_in_input:
-                logging.warning(
-                    f"Expected {self.cfg.num_images_in_input} images, got {len(images_list)}."
-                )
-
-            observation["images"] = [self._prepare_image(im) for im in images_list]
-            
-            if instruction:
-                observation["instruction"] = instruction
-            
-            proprio = kwargs.get("proprio")
-            if proprio is not None:
-                observation["proprio"] = proprio
-
-        final_unnorm_key = unnorm_key or self.cfg.unnorm_key
-        if not final_unnorm_key:
-             raise ValueError("No unnorm_key provided in config or arguments.")
-
-        try:
-            action = get_vla_action(
-                self.cfg,
-                self.vla,
-                self.processor,
-                observation,
-                observation.get("instruction", ""),
-                action_head=self.action_head,
-                proprio_projector=self.proprio_projector,
-                use_film=self.cfg.use_film,
-            )
-            return action
-            
-        except Exception as err:
-            logging.error(traceback.format_exc())
-            raise RuntimeError("Failed to predict action.") from err
+    def __del__(self) -> None:
+        with suppress(Exception):
+            self.close()

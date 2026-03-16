@@ -64,3 +64,37 @@ def test_resolve_model_spec_supports_runtime_kwargs(monkeypatch) -> None:
         "runtime_python": ".venvs/openvla/bin/python",
         "default_unnorm_key": "bridge_orig",
     }
+
+
+def test_resolve_model_spec_supports_openvla_oft_runtime_kwargs(monkeypatch) -> None:
+    _install_fake_ros_modules()
+    module_name = "roboneuron_core.servers.vla_server"
+    sys.modules.pop(module_name, None)
+    sys.modules.pop("roboneuron_core.utils.eef_delta", None)
+    vla_server = importlib.import_module(module_name)
+
+    monkeypatch.setattr(
+        vla_server,
+        "_load_vla_models_config",
+        lambda: {
+            "openvla-oft": {
+                "path": "checkpoints/openvla-oft/openvla-oft-pick-banana",
+                "kwargs": {
+                    "runtime_python": ".venvs/openvla-oft/bin/python",
+                    "default_unnorm_key": "vr_banana",
+                    "robot_platform": "bridge",
+                    "use_proprio": True,
+                },
+            }
+        },
+    )
+
+    model_path, model_kwargs = vla_server._resolve_model_spec("openvla-oft", None)
+
+    assert model_path == "checkpoints/openvla-oft/openvla-oft-pick-banana"
+    assert model_kwargs == {
+        "runtime_python": ".venvs/openvla-oft/bin/python",
+        "default_unnorm_key": "vr_banana",
+        "robot_platform": "bridge",
+        "use_proprio": True,
+    }

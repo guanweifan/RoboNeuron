@@ -80,8 +80,10 @@ models/
 *.pth
 *.safetensors
 *.onnx
+.cache/
 
 # Local config / machine-specific files
+.codex
 .env
 .env.*
 !.env.example

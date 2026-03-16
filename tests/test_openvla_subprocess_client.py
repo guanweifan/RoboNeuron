@@ -24,6 +24,11 @@ def test_openvla_subprocess_client_round_trip() -> None:
         device="cpu",
         low_cpu_mem_usage=False,
     )
+    assert client.model_path == str(project_root / "checkpoints" / "openvla" / "openvla-7b")
+    assert client.runtime_extra_python_paths == [
+        str(project_root / "src"),
+        str(project_root / "tests"),
+    ]
 
     try:
         client.load()
