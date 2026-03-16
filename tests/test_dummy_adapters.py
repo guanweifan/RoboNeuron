@@ -34,36 +34,17 @@ def test_dummy_camera_wrapper_generates_deterministic_frame() -> None:
     assert not wrapper.is_opened()
 
 
-def test_dummy_vla_wrapper_supports_accel_and_prune_configs() -> None:
+def test_dummy_vla_wrapper_predicts_action() -> None:
     wrapper = DummyVLAWrapper(img_size=16, action_dim=7)
     wrapper.load()
 
     image = Image.fromarray(np.zeros((16, 16, 3), dtype=np.uint8))
-    action = wrapper.predict_action(
-        image=image,
-        instruction="do task",
-        accel_method="fastv",
-        accel_config={"use_fastv": True, "fastv_k": 4, "fastv_r": 0.75},
-        prune_config={"layer": "dummy_block", "ratio": 0.25},
-    )
+    action = wrapper.predict_action(image=image, instruction="do task")
 
     assert action.shape == (1, 7)
-    assert wrapper.model is not None
-    assert wrapper.model.current_prune_ratio == pytest.approx(0.25)
-    assert wrapper.model.last_fastv_config == {
-        "use_fastv": True,
-        "fastv_k": 4,
-        "fastv_r": 0.75,
-    }
     np.testing.assert_allclose(
         action,
-        wrapper.predict_action(
-            image=image,
-            instruction="do task",
-            accel_method="fastv",
-            accel_config={"use_fastv": True, "fastv_k": 4, "fastv_r": 0.75},
-            prune_config={"layer": "dummy_block", "ratio": 0.25},
-        ),
+        wrapper.predict_action(image=image, instruction="do task"),
     )
 
 

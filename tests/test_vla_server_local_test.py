@@ -50,18 +50,10 @@ def test_run_local_test_without_ros(monkeypatch, capsys) -> None:
             {"default_unnorm_key": "bridge_orig"},
         ),
     )
-    monkeypatch.setattr(
-        vla_server,
-        "resolve_accel_configs",
-        lambda model_name, accel_method, accel_level: ({"window": 4}, {"ratio": 0.5}),
-    )
-
     result = vla_server._run_local_test(
         model_name="openvla",
         model_path=None,
         instruction="pick up the blue bowl",
-        accel_method="fastv",
-        accel_level="balanced",
     )
 
     captured = capsys.readouterr()
@@ -76,10 +68,6 @@ def test_run_local_test_without_ros(monkeypatch, capsys) -> None:
         {
             "size": (64, 64),
             "instruction": "pick up the blue bowl",
-            "kwargs": {
-                "accel_method": "fastv",
-                "accel_config": {"window": 4},
-                "prune_config": {"ratio": 0.5},
-            },
+            "kwargs": {},
         }
     ]

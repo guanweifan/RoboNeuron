@@ -114,4 +114,4 @@ def test_start_vla_inference_allows_dummy_without_model_path(monkeypatch) -> Non
         instruction="test task",
     )
 
-    assert result == "Success: VLA dummy started (pid=4321) with accel_method=none, accel_level=off."
+    assert result == "Success: VLA dummy started (pid=4321)."

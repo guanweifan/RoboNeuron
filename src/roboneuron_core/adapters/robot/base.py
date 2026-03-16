@@ -3,38 +3,18 @@ from typing import Any
 
 
 class AdapterWrapper(ABC):
-    """
-    Abstract Base Class for Robot/Environment Adapters.
-
-    Defines the standard interface for environment interaction: 
-    observation gathering and action execution.
-    """
+    """Base interface for robot-side adapters."""
 
     def __init__(self, **kwargs: Any) -> None:
-        """Initializes the AdapterWrapper."""
+        """Store adapter-specific options."""
         self.kwargs = kwargs
 
     @abstractmethod
     def obtain_observation(self) -> dict[str, Any]:
-        """
-        Gathers the current state of the environment and formats it into 
-        a standardized observation dictionary for the policy.
-        
-        Returns:
-            Dict[str, Any]: The standardized observation.
-        """
+        """Return the current observation in the policy-facing format."""
         raise NotImplementedError
-    
+
     @abstractmethod
     def step(self, action: Any) -> Any:
-        """
-        Translates the policy's standardized action into environment-specific 
-        commands and executes one step.
-
-        Args:
-            action (Any): The standardized action output from the policy.
-
-        Returns:
-            Any: Optional post-step information (e.g., status, reward).
-        """
+        """Apply one action and return any adapter-specific result."""
         raise NotImplementedError

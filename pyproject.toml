@@ -14,7 +14,6 @@ dependencies = [
     "pillow>=12.0.0",
     "pydantic>=2.11.0,<3",
     "torch>=2.9.1",
-    "pyrealsense2>=2.56.5.9235",
 ]
 
 [build-system]
@@ -31,7 +30,6 @@ packages = ["src/roboneuron_core"]
 roboneuron-mcp-perception = "roboneuron_core.cli.mcp_entrypoints:mcp_perception"
 roboneuron-mcp-vla = "roboneuron_core.cli.mcp_entrypoints:mcp_vla"
 roboneuron-mcp-control = "roboneuron_core.cli.mcp_entrypoints:mcp_control"
-roboneuron-mcp-simulation = "roboneuron_core.cli.mcp_entrypoints:mcp_simulation"
 roboneuron-mcp-twist = "roboneuron_core.cli.mcp_entrypoints:mcp_twist"
 roboneuron-mcp-eef-delta = "roboneuron_core.cli.mcp_entrypoints:mcp_eef_delta"
 
@@ -81,7 +79,6 @@ no_implicit_optional = true
 files = [
     "src/roboneuron_core/adapters",
     "src/roboneuron_core/cli",
-    "src/roboneuron_core/types",
     "src/roboneuron_core/utils",
     "tests",
 ]

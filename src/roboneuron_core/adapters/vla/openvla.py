@@ -14,12 +14,6 @@ from roboneuron_core.runtime.openvla_client import OpenVLASubprocessClient
 from .base import ModelWrapper
 
 logger = logging.getLogger(__name__)
-_ORCHESTRATION_ONLY_PREDICT_KWARGS = {
-    "accel_method",
-    "accel_level",
-    "accel_config",
-    "prune_config",
-}
 
 
 class OpenVLAWrapper(ModelWrapper):
@@ -93,16 +87,11 @@ class OpenVLAWrapper(ModelWrapper):
             raise RuntimeError("Model or processor is not loaded. Call load() first.")
 
         final_unnorm_key = unnorm_key if unnorm_key is not None else self.default_unnorm_key
-        runtime_predict_kwargs = {
-            key: value
-            for key, value in predict_kwargs.items()
-            if key not in _ORCHESTRATION_ONLY_PREDICT_KWARGS
-        }
         return self._runtime.predict_action(
             image=image,
             instruction=instruction,
             unnorm_key=final_unnorm_key,
-            extra_predict_kwargs=runtime_predict_kwargs,
+            extra_predict_kwargs=predict_kwargs,
         )
 
     def predict_action(

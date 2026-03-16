@@ -51,7 +51,6 @@ def test_openvla_wrapper_uses_subprocess_runtime(monkeypatch) -> None:
     action = wrapper.predict_action(
         image=Image.fromarray(np.zeros((16, 16, 3), dtype=np.uint8)),
         instruction="pick up the object",
-        accel_method="none",
     )
 
     assert fake_runtime.loaded

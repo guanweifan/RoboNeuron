@@ -14,12 +14,6 @@ from roboneuron_core.runtime.openvla_oft_client import OpenVLAOFTSubprocessClien
 from .base import ModelWrapper
 
 logger = logging.getLogger(__name__)
-_ORCHESTRATION_ONLY_PREDICT_KWARGS = {
-    "accel_method",
-    "accel_level",
-    "accel_config",
-    "prune_config",
-}
 
 
 class OpenVLAOFTWrapper(ModelWrapper):
@@ -110,11 +104,7 @@ class OpenVLAOFTWrapper(ModelWrapper):
         instruction: str,
         **predict_kwargs: Any,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        runtime_predict_kwargs = {
-            key: value
-            for key, value in predict_kwargs.items()
-            if key not in _ORCHESTRATION_ONLY_PREDICT_KWARGS
-        }
+        runtime_predict_kwargs = dict(predict_kwargs)
 
         if isinstance(image, dict):
             observation = dict(image)

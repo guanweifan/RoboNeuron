@@ -53,7 +53,6 @@ def test_openvla_oft_wrapper_uses_subprocess_runtime(monkeypatch) -> None:
         image=Image.fromarray(np.zeros((16, 16, 3), dtype=np.uint8)),
         instruction="pick banana",
         proprio=np.zeros((7,), dtype=np.float32),
-        accel_method="none",
     )
 
     assert fake_runtime.loaded

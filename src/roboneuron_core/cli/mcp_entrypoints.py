@@ -22,10 +22,6 @@ def mcp_control() -> None:
     _run_module("roboneuron_core.servers.control_server")
 
 
-def mcp_simulation() -> None:
-    _run_module("roboneuron_core.servers.simulation_server")
-
-
 def mcp_twist() -> None:
     _run_module("roboneuron_core.servers.generated.twist_server")
 

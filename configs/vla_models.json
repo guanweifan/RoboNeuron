@@ -17,6 +17,5 @@
         "use_proprio": true,
         "num_images_in_input": 1,
         "default_proprio": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    },
-    "pi0": "/path/to/your/pi0/model"
+    }
 }

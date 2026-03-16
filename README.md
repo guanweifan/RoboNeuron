@@ -19,7 +19,7 @@
 
 ## Project Overview
 
-**RoboNeuron** is a modular **middleware for embodied AI systems** that bridges high-level intelligence (e.g., LLMs, VLA models, and skill policies) with **ROS 2-based robotic execution**. It is designed for researchers and developers who want to integrate perception, inference, and control modules without tightly coupling model logic to robot-specific runtime details.
+**RoboNeuron** is a modular **middleware for embodied AI systems** that bridges high-level intelligence with **ROS 2-based robotic execution**. It is designed for researchers and developers who want to integrate perception, VLA inference, and control modules without tightly coupling model logic to robot-specific runtime details.
 
 <p align="center">
   <img src="./assets/stack.png" width="60%"
@@ -28,7 +28,7 @@
 
 <p align="center"><em>RoboNeuron as the middleware layer between embodied intelligence and ROS 2 execution.</em></p>
 
-At its core, RoboNeuron separates **agent-facing orchestration** from **ROS 2 data transport**, enabling two common execution patterns under one unified framework:
+At its core, RoboNeuron separates **agent-facing orchestration** from **ROS 2 data transport**, enabling two main execution patterns:
 
 - **Direct tool-to-ROS execution** for low-latency robot commands
 - **Closed-loop perception → VLA inference → control pipelines** for embodied tasks
@@ -42,11 +42,11 @@ At its core, RoboNeuron separates **agent-facing orchestration** from **ROS 2 da
 
 ### Highlights
 
-- **Modular by design**: perception, VLA, control, and robot backends can be developed and replaced independently
-- **ROS-native execution**: integrates with existing ROS 2 topics, messages, controllers, and simulators
-- **VLA-ready infrastructure**: supports heterogeneous VLA backends through adapter-oriented integration
-- **Tool-based capability exposure**: maps robot functions into structured callable interfaces for agentic workflows
-- **Deployment-friendly**: supports both simulation and real-world robotic systems under the same abstraction
+- **Modular by design**: perception, VLA, control, and robot adapters can evolve independently
+- **ROS-native execution**: integrates with existing ROS 2 topics, messages, and controllers
+- **VLA-ready infrastructure**: supports `dummy`, `openvla`, and `openvla-oft` through a shared adapter interface
+- **Tool-based capability exposure**: maps robot functions into structured callable interfaces for agent workflows
+- **Deployment-friendly**: keeps heavy VLA dependencies isolated in dedicated runtimes
 
 In short, RoboNeuron is a **reusable infrastructure layer** for building, testing, and deploying embodied AI pipelines on top of ROS 2.
 
@@ -63,13 +63,10 @@ roboneuron/
 │       ├── servers/              # MCP server implementations
 │       │   └── generated/        # Generated MCP server modules
 │       ├── adapters/             # Camera/robot/VLA adapters
-│       ├── types/                # Typed config/data models
 │       └── utils/                # Reusable utilities
 ├── tests/                        # Flat test suite (unit/integration via pytest markers)
-├── docs/                         # Project documentation
 ├── configs/                      # Configuration files
-│   ├── vla_models.json           # VLA model paths and configurations
-│   └── vla_accel_presets.json    # Inference acceleration presets
+│   └── vla_models.json           # VLA model paths and configurations
 ├── templates/                    # Templates for generating new MCP tools
 ├── assets/                       # README assets
 ├── urdf/                         # Robot description files
@@ -173,18 +170,6 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
     ],
     "cwd": "/home/user/roboneuron"
     },
-    "roboneuron-simulation": {
-      "autoApprove": [],
-      "disabled": false,
-      "timeout": 60,
-      "type": "stdio",
-      "command": "bash",
-      "args": [
-        "-c",
-        "source /opt/ros/humble/setup.bash && source /home/user/roboneuron/ros/install/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-simulation"
-      ],
-      "cwd": "/home/user/roboneuron"
-    },
     "roboneuron-twist": {
     "autoApprove": [],
     "disabled": false,
@@ -240,7 +225,7 @@ dependencies needed by the OFT action heads and proprio projector.
 
 ### Step 7: Configure VLA Models
 
-Edit `configs/vla_models.json` to specify model checkpoints and runtime configuration. String values are still supported for simple models, but OpenVLA should use the richer object form:
+Edit `configs/vla_models.json` to specify model checkpoints and runtime configuration:
 
 ```json
 {
@@ -262,8 +247,7 @@ Edit `configs/vla_models.json` to specify model checkpoints and runtime configur
     "use_proprio": true,
     "num_images_in_input": 1,
     "default_proprio": [0, 0, 0, 0, 0, 0, 0]
-  },
-  "pi0": "/path/to/your/pi0/model"
+  }
 }
 ```
 
@@ -276,11 +260,9 @@ After the dedicated runtime is ready, run:
 pytest -q tests/test_openvla_oft_deploy_smoke.py -m integration
 ```
 
-### Optional Components Added in Current Mainline
+### Included Lightweight Validation Components
 
-- `src/roboneuron_core/adapters/robot/calvin_adapter.py`: CALVIN adapter (optional runtime dependency).
 - `src/roboneuron_core/adapters/vla/dummy_vla.py`: lightweight pipeline test model.
-- `src/roboneuron_core/adapters/vla/pi0.py`: OpenPI (`pi0`) wrapper (optional runtime dependency).
 
 ### CLI Entrypoints
 
@@ -289,7 +271,6 @@ Canonical service entrypoints are:
 - `uv run roboneuron-mcp-perception`
 - `source ros/install/setup.bash && uv run roboneuron-mcp-vla`
 - `source ros/install/setup.bash && uv run roboneuron-mcp-control`
-- `source ros/install/setup.bash && uv run roboneuron-mcp-simulation`
 - `uv run roboneuron-mcp-twist`
 - `source ros/install/setup.bash && uv run roboneuron-mcp-eef-delta`
 
@@ -308,6 +289,8 @@ Canonical service entrypoints are:
 
 ### Case II: Kinematic-Aware Manipulation in Simulation
 
+Legacy demo asset retained from earlier project iterations.
+
 `Instruction: "Move the robotic arm gripper forward at a speed of 0.1m/s"`
 
 <div align="center">
@@ -318,7 +301,7 @@ Canonical service entrypoints are:
 
 ### Case III: Real-World VLA-Driven Object Grasping
 
-`Instruction: "Using RealSense camera and OpenVLA model, to pick up the blue bowl."`
+`Instruction: "Using an RGB camera and OpenVLA model, pick up the blue bowl."`
 
 <div align="center">
     <img src="assets/franka_vla_demo.gif" width="650" style="max-width: 100%; border: 1px solid #ccc; border-radius: 8px;">
@@ -371,7 +354,7 @@ Canonical service entrypoints are:
 1. Create adapter in `src/roboneuron_core/adapters/robot/`
 2. Implement platform-specific communication
 3. Provide URDF or kinematic description
-4. Test with simulation before hardware deployment
+4. Validate the adapter with focused tests before hardware deployment
 
 ### Registering a Custom ROS 2 Message
 

@@ -26,8 +26,6 @@ class DummyVLAModel(nn.Module):
         self.img_size = img_size
         self.action_dim = action_dim
         self.hidden_dim = hidden_dim
-        self.current_prune_ratio = 0.0
-        self.last_fastv_config: dict[str, Any] | None = None
 
         self.conv = nn.Sequential(
             nn.Conv2d(3, 16, kernel_size=3, stride=2, padding=1),
@@ -52,14 +50,6 @@ class DummyVLAModel(nn.Module):
                 nn.init.constant_(module.weight, 0.005)
                 nn.init.zeros_(module.bias)
 
-    def apply_pruning(self, layer_name: str, prune_ratio: float) -> None:
-        self.current_prune_ratio = prune_ratio
-        logger.info(
-            "[DummyPrune] Pretend pruning layer '%s' by %.1f%%",
-            layer_name,
-            prune_ratio * 100.0,
-        )
-
     def forward(self, img_tensor: torch.Tensor) -> torch.Tensor:
         encoded = self.conv(img_tensor)
         flattened = encoded.flatten(1)
@@ -69,30 +59,14 @@ class DummyVLAModel(nn.Module):
     def predict_action(
         self,
         pixel_values: torch.Tensor,
-        fastv_config: dict[str, Any] | None = None,
-        prune_config: dict[str, Any] | None = None,
         **_: Any,
     ) -> np.ndarray:
-        if prune_config is not None:
-            layer = str(prune_config.get("layer", "dummy_layer"))
-            ratio = float(prune_config.get("ratio", 0.5))
-            self.apply_pruning(layer, ratio)
-
-        self.last_fastv_config = dict(fastv_config) if fastv_config is not None else None
-        if self.last_fastv_config is not None:
-            logger.info(
-                "[DummyFastV] use_fastv=%s, k=%s, r=%s",
-                self.last_fastv_config.get("use_fastv", False),
-                self.last_fastv_config.get("fastv_k"),
-                self.last_fastv_config.get("fastv_r"),
-            )
-
         logits = self(pixel_values)
         return logits.cpu().numpy()
 
 
 class DummyVLAWrapper(ModelWrapper):
-    """Pipeline-oriented dummy VLA that supports accel/prune plumbing."""
+    """Pipeline-oriented dummy VLA for local validation."""
 
     def __init__(
         self,
@@ -106,9 +80,6 @@ class DummyVLAWrapper(ModelWrapper):
         self.img_size = img_size
         self.action_dim = action_dim
         self.model: DummyVLAModel | None = None
-        self.last_accel_method: str | None = None
-        self.last_accel_config: dict[str, Any] | None = None
-        self.last_prune_config: dict[str, Any] | None = None
 
     def load(self) -> None:
         self.model = DummyVLAModel(
@@ -129,27 +100,15 @@ class DummyVLAWrapper(ModelWrapper):
         image: Image.Image,
         instruction: str,
         unnorm_key: str | None = None,
-        accel_method: str | None = None,
-        accel_config: dict[str, Any] | None = None,
-        prune_config: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> Any:
         del instruction, unnorm_key, kwargs
         if self.model is None:
             raise RuntimeError("DummyVLAWrapper.load() must be called before predict_action().")
 
-        self.last_accel_method = accel_method
-        self.last_accel_config = dict(accel_config) if accel_config is not None else None
-        self.last_prune_config = dict(prune_config) if prune_config is not None else None
-
         img = image.convert("RGB").resize((self.img_size, self.img_size))
         arr = np.asarray(img, dtype=np.float32) / 255.0
         arr = np.transpose(arr, (2, 0, 1))
         tensor = torch.from_numpy(arr).unsqueeze(0).to(self.device)
 
-        fastv_cfg = self.last_accel_config if accel_method == "fastv" else None
-        return self.model.predict_action(
-            pixel_values=tensor,
-            fastv_config=fastv_cfg,
-            prune_config=self.last_prune_config,
-        )
+        return self.model.predict_action(pixel_values=tensor)

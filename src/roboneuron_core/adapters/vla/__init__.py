@@ -38,20 +38,5 @@ def _register_builtin_models() -> None:
     else:
         register_model("openvla-oft", OpenVLAOFTWrapper)
 
-    try:
-        from .openvla_fastv import OpenVLAFastVWrapper
-    except Exception as exc:  # pragma: no cover - optional dependency path
-        logger.warning("OpenVLA-FastV wrapper not available: %s", exc)
-    else:
-        register_model("openvla-fastv", OpenVLAFastVWrapper)
-        register_model("openvla_fastv", OpenVLAFastVWrapper)
-
-    try:
-        from .pi0 import Pi0Wrapper
-    except Exception as exc:  # pragma: no cover - optional dependency path
-        logger.warning("Pi0 wrapper not available: %s", exc)
-    else:
-        register_model("pi0", Pi0Wrapper)
-
 
 _register_builtin_models()
