@@ -91,3 +91,5 @@ nomcp-version
 
 # Windows ADS filename artifacts occasionally introduced in repos
 *:[Zz]one.Identifier*
+
+references/

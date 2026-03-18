@@ -1,0 +1,30 @@
+{
+  "imports": [],
+  "mcpServers": {
+    "roboneuron-perception": {
+      "description": "RoboNeuron perception MCP server for camera start/stop control.",
+      "command": "/home/guanweifan/RoboNeuron/scripts/openclaw/roboneuron-mcp-perception.sh",
+      "lifecycle": "keep-alive"
+    },
+    "roboneuron-vla": {
+      "description": "RoboNeuron VLA MCP server for instruction-conditioned action inference.",
+      "command": "/home/guanweifan/RoboNeuron/scripts/openclaw/roboneuron-mcp-vla.sh",
+      "lifecycle": "keep-alive"
+    },
+    "roboneuron-control": {
+      "description": "RoboNeuron control MCP server for IK/controller orchestration.",
+      "command": "/home/guanweifan/RoboNeuron/scripts/openclaw/roboneuron-mcp-control.sh",
+      "lifecycle": "keep-alive"
+    },
+    "roboneuron-twist": {
+      "description": "RoboNeuron Twist publisher MCP server.",
+      "command": "/home/guanweifan/RoboNeuron/scripts/openclaw/roboneuron-mcp-twist.sh",
+      "lifecycle": "keep-alive"
+    },
+    "roboneuron-eef-delta": {
+      "description": "RoboNeuron EEF delta publisher MCP server.",
+      "command": "/home/guanweifan/RoboNeuron/scripts/openclaw/roboneuron-mcp-eef-delta.sh",
+      "lifecycle": "keep-alive"
+    }
+  }
+}
