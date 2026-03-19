@@ -92,4 +92,5 @@ nomcp-version
 # Windows ADS filename artifacts occasionally introduced in repos
 *:[Zz]one.Identifier*
 
-references/
+# Local top-level reference trees are optional and should not be committed by default.
+/references/

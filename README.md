@@ -12,6 +12,7 @@
 ## Table of Contents
 - [Project Overview](#project-overview)
 - [Directory Structure](#directory-structure)
+- [Structure Notes](#structure-notes)
 - [Installation & Configuration](#installation--configuration)
 - [Demo Showcase](#demo-showcase)
 - [Extending RoboNeuron](#extending-roboneuron)
@@ -19,7 +20,7 @@
 
 ## Project Overview
 
-**RoboNeuron** is a modular **middleware for embodied AI systems** that bridges high-level intelligence with **ROS 2-based robotic execution**. It is designed for researchers and developers who want to integrate perception, VLA inference, and control modules without tightly coupling model logic to robot-specific runtime details.
+**RoboNeuron** is a **ROS2-native middleware layer for embodied AI**. It connects perception, VLA inference, control resolution, and MCP-based capability exposure without binding model logic directly to robot-specific runtime code.
 
 <p align="center">
   <img src="./assets/stack.png" width="60%"
@@ -28,7 +29,7 @@
 
 <p align="center"><em>RoboNeuron as the middleware layer between embodied intelligence and ROS 2 execution.</em></p>
 
-At its core, RoboNeuron separates **agent-facing orchestration** from **ROS 2 data transport**, enabling two main execution patterns:
+At its core, RoboNeuron separates **agent-facing orchestration** from **ROS 2 execution**, enabling two main patterns:
 
 - **Direct tool-to-ROS execution** for low-latency robot commands
 - **Closed-loop perception → VLA inference → control pipelines** for embodied tasks
@@ -42,11 +43,11 @@ At its core, RoboNeuron separates **agent-facing orchestration** from **ROS 2 da
 
 ### Highlights
 
-- **Modular by design**: perception, VLA, control, and robot adapters can evolve independently
+- **Small set of core runtime modules**: `perception`, `vla`, and `control` remain the main execution spine
 - **ROS-native execution**: integrates with existing ROS 2 topics, messages, and controllers
 - **VLA-ready infrastructure**: supports `dummy`, `openvla`, and `openvla-oft` through a shared adapter interface
 - **Tool-based capability exposure**: maps robot functions into structured callable interfaces for agent workflows
-- **Deployment-friendly**: keeps heavy VLA dependencies isolated in dedicated runtimes
+- **Deployment-friendly**: keeps heavy VLA dependencies isolated in dedicated runtimes and MCP launchers
 
 In short, RoboNeuron is a **reusable infrastructure layer** for building, testing, and deploying embodied AI pipelines on top of ROS 2.
 
@@ -55,20 +56,24 @@ In short, RoboNeuron is a **reusable infrastructure layer** for building, testin
 ```text
 roboneuron/
 ├── README.md                     # Project documentation
+├── docs/                         # Architecture notes and longer-form project analysis
 ├── pyproject.toml
 ├── uv.lock
 ├── src/
 │   └── roboneuron_core/          # Core implementation
-│       ├── cli/                  # Command/entry modules
-│       ├── servers/              # MCP server implementations
-│       │   └── generated/        # Generated MCP server modules
-│       ├── adapters/             # Camera/robot/VLA adapters
-│       └── utils/                # Reusable utilities
-├── tests/                        # Flat test suite (unit/integration via pytest markers)
+│       ├── servers/              # Core runtime hosts: perception / vla / control
+│       │   └── generated/        # Generated MCP server modules for raw ROS message exposure
+│       ├── adapters/             # Camera and VLA wrappers only
+│       ├── runtime/              # Dedicated worker/client runtimes for heavy VLA stacks
+│       ├── cli/                  # MCP entrypoints and tool generation CLI
+│       └── utils/                # Internal support code used by core servers
 ├── configs/                      # Configuration files
-│   └── vla_models.json           # VLA model paths and configurations
-├── templates/                    # Templates for generating new MCP tools
+│   ├── vla_models.json           # VLA model paths and runtime configuration
+│   └── openclaw/                 # OpenClaw-facing MCP launcher configuration
+├── openclaw/                     # First-class OpenClaw integration assets and skills
+├── tests/                        # Flat test suite (unit/integration via pytest markers)
 ├── assets/                       # README assets
+├── templates/                    # Templates for generating new MCP tools
 ├── urdf/                         # Robot description files
 │   ├── panda.urdf                # Franka Panda robot URDF
 │   └── fr3.urdf                  # Franka Research 3 robot URDF
@@ -77,6 +82,17 @@ roboneuron/
 └── third_party/
     └── vla_src/                  # Vendored VLA source trees
 ```
+
+## Structure Notes
+
+RoboNeuron should be understood through four layers:
+
+- **Core servers**: [perception_server.py](./src/roboneuron_core/servers/perception_server.py), [vla_server.py](./src/roboneuron_core/servers/vla_server.py), and [control_server.py](./src/roboneuron_core/servers/control_server.py) are the runtime spine.
+- **Wrappers and runtimes**: `adapters/` holds swappable camera/VLA wrappers, while `runtime/` isolates heavy model workers and protocols.
+- **ROS boundary**: `ros/roboneuron_interfaces` defines first-party message contracts used to connect RoboNeuron to ROS 2 systems.
+- **Integrations and configs**: `configs/` holds stable configuration, and `openclaw/` contains the first-class OpenClaw integration surface.
+
+For a more opinionated analysis of the current structure and future direction, see [docs/roboneuron-structure-and-roadmap.md](./docs/roboneuron-structure-and-roadmap.md).
 
 ## Installation & Configuration
 
@@ -198,6 +214,8 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
 }
 ```
 
+For OpenClaw workflows, the repo-scoped `mcporter` configuration now lives at `configs/openclaw/mcporter.json`.
+
 ### Step 6: Set Up the Dedicated OpenVLA Runtime
 
 OpenVLA now runs in its own Python environment instead of the main RoboNeuron environment. This keeps the primary `uv sync` environment minimal and isolates model-specific dependencies such as `transformers`, `flash-attn`, and vendored `prismatic`.
@@ -289,8 +307,6 @@ Canonical service entrypoints are:
 
 ### Case II: Kinematic-Aware Manipulation in Simulation
 
-Legacy demo asset retained from earlier project iterations.
-
 `Instruction: "Move the robotic arm gripper forward at a speed of 0.1m/s"`
 
 <div align="center">
@@ -349,12 +365,12 @@ Legacy demo asset retained from earlier project iterations.
    ```
 4. Add model configuration to `configs/vla_models.json`
 
-### Supporting New Robot Platforms
+### Connecting New Robot Platforms
 
-1. Create adapter in `src/roboneuron_core/adapters/robot/`
-2. Implement platform-specific communication
-3. Provide URDF or kinematic description
-4. Validate the adapter with focused tests before hardware deployment
+1. Provide a URDF or equivalent kinematic description under `urdf/`
+2. Identify the robot's ROS 2 state and command topics
+3. Start the control runtime with the matching URDF and topic bindings
+4. Validate the control path with focused tests before hardware deployment
 
 ### Registering a Custom ROS 2 Message
 

@@ -12,7 +12,7 @@ Scope:
 - Starting or stopping the RoboNeuron MCP daemon/runtime paths used by OpenClaw.
 
 Required command form:
-- Always invoke `mcporter` with `--config /home/guanweifan/RoboNeuron/config/mcporter.json`.
+- Always invoke `mcporter` with `--config /home/guanweifan/RoboNeuron/configs/openclaw/mcporter.json`.
 - Never rely on editor-imported MCP configs for RoboNeuron.
 
 Startup order:
@@ -23,8 +23,8 @@ Startup order:
 5. Use `roboneuron-eef-delta` for direct end-effector delta commands.
 
 Useful commands:
-- `mcporter --config /home/guanweifan/RoboNeuron/config/mcporter.json list`
-- `mcporter --config /home/guanweifan/RoboNeuron/config/mcporter.json list roboneuron-control --schema`
+- `mcporter --config /home/guanweifan/RoboNeuron/configs/openclaw/mcporter.json list`
+- `mcporter --config /home/guanweifan/RoboNeuron/configs/openclaw/mcporter.json list roboneuron-control --schema`
 - `mcporter daemon status`
 - `mcporter daemon restart --log`
 

@@ -1,7 +1,7 @@
 [project]
 name = "roboneuron"
 version = "0.1.0"
-description = "Add your description here"
+description = "ROS2-native middleware for perception, VLA inference, control, and MCP exposure in embodied AI systems"
 readme = "README.md"
 requires-python = ">=3.10.12"
 dependencies = [
