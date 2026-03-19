@@ -69,6 +69,7 @@ class ActuationCommand:
 
     joint_names: list[str]
     positions: list[float]
+    gripper_open_fraction: float | None = None
 
 
 DEFAULT_NORMALIZED_CARTESIAN_VELOCITY_PROTOCOL = "normalized_cartesian_velocity"
@@ -172,9 +173,11 @@ class ChunkScheduler:
     def load(self, intents: list[MotionIntent], *, step_duration_sec: float, now: float | None = None) -> None:
         if step_duration_sec <= 0:
             raise ValueError("Chunk step duration must be positive.")
+        current_time = now if now is not None else time.monotonic()
+        preserve_next_dispatch_at = bool(self._pending) and self._next_dispatch_at > current_time
         self._pending = deque(intents)
         self._step_duration_sec = step_duration_sec
-        self._next_dispatch_at = now if now is not None else time.monotonic()
+        self._next_dispatch_at = self._next_dispatch_at if preserve_next_dispatch_at else current_time
 
     def dispatch_ready(self, *, now: float | None = None) -> MotionIntent | None:
         if not self._pending:
@@ -188,9 +191,16 @@ class ChunkScheduler:
         self._next_dispatch_at = current_time + self._step_duration_sec
         return intent
 
+    def clear(self) -> None:
+        self._pending.clear()
+
     @property
     def pending_count(self) -> int:
         return len(self._pending)
+
+    @property
+    def step_duration_sec(self) -> float:
+        return self._step_duration_sec
 
 
 class ControlRuntime:
@@ -227,6 +237,9 @@ class ControlRuntime:
         if intent is None:
             return None
         return self.resolver.resolve(intent, joint_positions)
+
+    def clear_action_chunk(self) -> None:
+        self.scheduler.clear()
 
 
 class URDFKinematicsResolver:
@@ -306,6 +319,7 @@ class URDFKinematicsResolver:
         return ActuationCommand(
             joint_names=self.active_joint_names + self.gripper_joints,
             positions=active_positions + gripper_positions,
+            gripper_open_fraction=intent.gripper_open_fraction,
         )
 
     def _build_seed(self, joint_positions: dict[str, float]) -> list[float]:

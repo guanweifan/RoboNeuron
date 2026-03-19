@@ -41,3 +41,46 @@ def test_task_space_state_round_trip() -> None:
     decoded = task_space_state_message_to_array(message)
 
     np.testing.assert_allclose(decoded, state)
+
+
+def test_quaternion_xyzw_to_rpy_identity() -> None:
+    _install_fake_task_space_state_module()
+
+    from roboneuron_core.utils.task_space_state import quaternion_xyzw_to_rpy
+
+    rpy = quaternion_xyzw_to_rpy([0.0, 0.0, 0.0, 1.0])
+
+    np.testing.assert_allclose(rpy, np.zeros((3,), dtype=np.float64))
+
+
+def test_extract_gripper_open_fraction_from_joint_state_uses_named_fingers() -> None:
+    _install_fake_task_space_state_module()
+
+    from roboneuron_core.utils.task_space_state import (
+        extract_gripper_open_fraction_from_joint_state,
+    )
+
+    open_fraction = extract_gripper_open_fraction_from_joint_state(
+        names=["fr3_joint1", "fr3_finger_joint1", "fr3_finger_joint2"],
+        positions=[0.0, 0.02, 0.02],
+        joint_names=["fr3_finger_joint1", "fr3_finger_joint2"],
+        closed_position=0.0,
+        open_position=0.04,
+    )
+
+    assert open_fraction == 0.5
+
+
+def test_pose_and_gripper_to_state_vector_combines_pose_and_gripper() -> None:
+    _install_fake_task_space_state_module()
+
+    from roboneuron_core.utils.task_space_state import pose_and_gripper_to_state_vector
+
+    state = pose_and_gripper_to_state_vector(
+        position_xyz=[0.3, -0.1, 0.5],
+        orientation_xyzw=[0.0, 0.0, 0.0, 1.0],
+        gripper_open_fraction=1.2,
+    )
+
+    np.testing.assert_allclose(state[:6], np.array([0.3, -0.1, 0.5, 0.0, 0.0, 0.0]))
+    assert state[6] == 1.0

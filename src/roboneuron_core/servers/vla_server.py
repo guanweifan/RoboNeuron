@@ -18,7 +18,6 @@ from roboneuron_core.adapters.vla import get_registry
 from roboneuron_core.adapters.vla.dummy_vla import DUMMY_MODEL_PATH
 from roboneuron_core.utils.control_runtime import DEFAULT_NORMALIZED_CARTESIAN_VELOCITY_PROTOCOL
 from roboneuron_core.utils.raw_action_chunk import RAW_ACTION_CHUNK_TOPIC
-from roboneuron_core.utils.task_space_state import TASK_SPACE_STATE_TOPIC
 
 _VLA_PROCESS: multiprocessing.Process | None = None
 EEF_DELTA_CMD_TOPIC = "/eef_delta_cmd"
@@ -194,8 +193,6 @@ def _load_ros_runtime() -> tuple[Any, type[Any]]:
             self._model.load()
 
             try:
-                import numpy as np
-
                 dummy_img = Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8))
                 action = self._model.predict_action(
                     image=dummy_img,
@@ -357,9 +354,14 @@ def _ros_worker(
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
+    except Exception as exc:
+        if type(exc).__name__ != "ExternalShutdownException":
+            raise
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        with suppress(Exception):
+            node.destroy_node()
+        with suppress(Exception):
+            rclpy.shutdown()
 
 
 @mcp.tool()
@@ -487,6 +489,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="vla_server.py local test harness")
     parser.add_argument("--local-test", action="store_true", help="Run local start/stop test instead of MCP server")
+    parser.add_argument("--run-ros", action="store_true", help="Run the ROS worker in the foreground instead of spawning from MCP")
     parser.add_argument("--model-name", type=str, default="dummy", help="Model registry key to test")
     parser.add_argument("--model-path", type=str, default=None, help="Path to model checkpoint")
     parser.add_argument("--instruction", type=str, default="do task", help="Natural language instruction for the VLA task")
@@ -507,6 +510,34 @@ if __name__ == "__main__":
                 args.model_path,
                 args.instruction,
             )
+        )
+    if args.run_ros:
+        try:
+            model_path, model_kwargs = _resolve_model_spec(args.model_name, args.model_path)
+            resolved_output_mode, resolved_action_protocol, resolved_action_frame = _resolve_output_contract(
+                args.model_name,
+                args.output_mode,
+                args.action_protocol,
+                args.action_frame,
+            )
+            resolved_output_topic = _resolve_output_topic(args.output_topic, resolved_output_mode)
+        except Exception as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+
+        _ros_worker(
+            args.model_name,
+            model_path,
+            model_kwargs,
+            args.input_topic,
+            resolved_output_topic,
+            args.instruction,
+            resolved_output_mode,
+            resolved_action_protocol,
+            resolved_action_frame,
+            args.step_duration_sec,
+            args.wrist_input_topic,
+            args.state_topic,
         )
     else:
         # Run as an MCP service
