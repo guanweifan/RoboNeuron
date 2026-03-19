@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-perception_mcp.py
+RoboNeuron perception server.
 
-MCP Server for managing RGB Camera ROS nodes.
-Allows the LLM to start/stop camera streams on specific topics dynamically.
+This MCP service manages RGB camera ROS nodes and exposes camera bring-up
+and shutdown as callable tools.
 """
 
 import argparse
@@ -20,10 +20,10 @@ from mcp.server.fastmcp import FastMCP
 from rclpy.node import Node
 from sensor_msgs.msg import Image as RosImage
 
-# Global storage for the background process
-_CAMERA_PROCESS = None
+# Global storage for background camera processes keyed by topic.
+_CAMERA_PROCESSES: dict[str, multiprocessing.Process] = {}
 
-mcp = FastMCP("robomcp-camera")
+mcp = FastMCP("roboneuron-perception")
 
 # --- Original ROS Logic (Encapsulated) ---
 
@@ -67,6 +67,23 @@ def _ros_worker(wrapper_import_path: str, topic: str, width: int, height: int):
         node.destroy_node()
         rclpy.shutdown()
 
+
+def _stop_camera_process(topic: str) -> bool:
+    process = _CAMERA_PROCESSES.get(topic)
+    if process is None or not process.is_alive():
+        _CAMERA_PROCESSES.pop(topic, None)
+        return False
+
+    process.terminate()
+    process.join(timeout=5.0)
+    if process.is_alive():
+        with suppress(Exception):
+            process.kill()
+        process.join(timeout=1.0)
+
+    _CAMERA_PROCESSES.pop(topic, None)
+    return True
+
 # --- MCP Tools ---
 
 @mcp.tool()
@@ -82,9 +99,9 @@ def start_camera(wrapper_import: str, topic: str = "/isaac_rgb") -> str:
         topic: [Output Topic] The ROS topic used to publish the streaming RGB images (default: /isaac_rgb).
     """
     # ... (function body unchanged)
-    global _CAMERA_PROCESS
-    if _CAMERA_PROCESS is not None and _CAMERA_PROCESS.is_alive():
-        return "Error: Camera is already running. Call stop_camera first."
+    existing = _CAMERA_PROCESSES.get(topic)
+    if existing is not None and existing.is_alive():
+        return f"Error: Camera is already running on {topic}. Call stop_camera(topic=...) first."
 
     # Use 'spawn' start method to avoid fork-related issues with rclpy/ROS.
     ctx = multiprocessing.get_context('spawn')
@@ -95,31 +112,36 @@ def start_camera(wrapper_import: str, topic: str = "/isaac_rgb") -> str:
     except Exception as e:
         return f"Error: failed to import camera wrapper '{wrapper_import}': {e}"
 
-    _CAMERA_PROCESS = ctx.Process(
+    process = ctx.Process(
         target=_ros_worker,
         args=(wrapper_import, topic, 256, 256),
         daemon=False  # do not mark as daemon so it survives parent thread handling during debugging
     )
-    _CAMERA_PROCESS.start()
-    return f"Success: Camera started publishing to {topic} (pid={_CAMERA_PROCESS.pid})."
+    process.start()
+    _CAMERA_PROCESSES[topic] = process
+    return f"Success: Camera started publishing to {topic} (pid={process.pid})."
 
 @mcp.tool()
-def stop_camera() -> str:
-    """Stops the currently running camera ROS node."""
-    global _CAMERA_PROCESS
-    if _CAMERA_PROCESS is None or not _CAMERA_PROCESS.is_alive():
+def stop_camera(topic: str | None = None) -> str:
+    """Stop one camera by topic, or all running cameras when topic is omitted."""
+    if topic is not None:
+        if _stop_camera_process(topic):
+            return f"Success: Camera on {topic} stopped."
+        return f"Info: No camera is running on {topic}."
+
+    if not _CAMERA_PROCESSES:
         return "Info: No camera is running."
 
-    _CAMERA_PROCESS.terminate()
-    _CAMERA_PROCESS.join(timeout=5.0)
-    if _CAMERA_PROCESS.is_alive():
-        # force kill (platform dependent); try again politely then detach
-        with suppress(Exception):
-            _CAMERA_PROCESS.kill()
-        _CAMERA_PROCESS.join(timeout=1.0)
+    stopped_topics: list[str] = []
+    for active_topic in list(_CAMERA_PROCESSES.keys()):
+        if _stop_camera_process(active_topic):
+            stopped_topics.append(active_topic)
 
-    _CAMERA_PROCESS = None
-    return "Success: Camera stopped."
+    if not stopped_topics:
+        return "Info: No camera is running."
+    if len(stopped_topics) == 1:
+        return f"Success: Camera on {stopped_topics[0]} stopped."
+    return f"Success: Stopped cameras on {', '.join(stopped_topics)}."
 
 if __name__ == "__main__":
     # Provide a convenient local test harness so you can debug without running the MCP service.
@@ -145,7 +167,7 @@ if __name__ == "__main__":
                 try:
                     # non-blocking wait; let user type 'stop'
                     time.sleep(0.5)
-                    if _CAMERA_PROCESS is None:
+                    if not _CAMERA_PROCESSES:
                         print("Camera process went away.")
                         break
                 except KeyboardInterrupt:

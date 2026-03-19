@@ -1,1 +1,1 @@
-"""Adapter package aggregating camera, robot, and VLA integrations."""
+"""Adapter package aggregating camera and VLA integrations."""

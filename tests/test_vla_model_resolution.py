@@ -25,6 +25,8 @@ def _install_fake_ros_modules() -> None:
     fake_roboneuron_interfaces = types.ModuleType("roboneuron_interfaces")
     fake_roboneuron_interfaces_msg = types.ModuleType("roboneuron_interfaces.msg")
     fake_roboneuron_interfaces_msg.EEFDeltaCommand = object
+    fake_roboneuron_interfaces_msg.RawActionChunk = object
+    fake_roboneuron_interfaces_msg.TaskSpaceState = object
     fake_roboneuron_interfaces.msg = fake_roboneuron_interfaces_msg
 
     sys.modules["rclpy"] = fake_rclpy
@@ -98,3 +100,34 @@ def test_resolve_model_spec_supports_openvla_oft_runtime_kwargs(monkeypatch) -> 
         "robot_platform": "bridge",
         "use_proprio": True,
     }
+
+
+def test_resolve_output_contract_defaults_openvla_oft_to_raw_chunks(monkeypatch) -> None:
+    _install_fake_ros_modules()
+    module_name = "roboneuron_core.servers.vla_server"
+    sys.modules.pop(module_name, None)
+    sys.modules.pop("roboneuron_core.utils.eef_delta", None)
+    vla_server = importlib.import_module(module_name)
+
+    output_mode, action_protocol, action_frame = vla_server._resolve_output_contract(
+        "openvla-oft",
+        "auto",
+        None,
+        "tool",
+    )
+
+    assert output_mode == "raw_action_chunk"
+    assert action_protocol == "normalized_cartesian_velocity"
+    assert action_frame == "tool"
+
+
+def test_resolve_output_topic_switches_default_chunk_topic(monkeypatch) -> None:
+    _install_fake_ros_modules()
+    module_name = "roboneuron_core.servers.vla_server"
+    sys.modules.pop(module_name, None)
+    sys.modules.pop("roboneuron_core.utils.eef_delta", None)
+    vla_server = importlib.import_module(module_name)
+
+    resolved = vla_server._resolve_output_topic("/eef_delta_cmd", "raw_action_chunk")
+
+    assert resolved == "/raw_action_chunk"

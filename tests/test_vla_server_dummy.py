@@ -54,7 +54,28 @@ def _install_fake_ros_modules() -> None:
             self.delta_yaw = 0.0
             self.gripper_cmd = 0.0
 
+    class FakeRawActionChunk:
+        def __init__(self) -> None:
+            self.protocol = ""
+            self.frame = ""
+            self.action_dim = 0
+            self.chunk_length = 0
+            self.step_duration_sec = 0.0
+            self.values = []
+
+    class FakeTaskSpaceState:
+        def __init__(self) -> None:
+            self.x = 0.0
+            self.y = 0.0
+            self.z = 0.0
+            self.roll = 0.0
+            self.pitch = 0.0
+            self.yaw = 0.0
+            self.gripper_open_fraction = 0.0
+
     fake_roboneuron_interfaces_msg.EEFDeltaCommand = FakeEEFDeltaCommand
+    fake_roboneuron_interfaces_msg.RawActionChunk = FakeRawActionChunk
+    fake_roboneuron_interfaces_msg.TaskSpaceState = FakeTaskSpaceState
     fake_roboneuron_interfaces.msg = fake_roboneuron_interfaces_msg
 
     sys.modules["rclpy"] = fake_rclpy

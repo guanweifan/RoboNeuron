@@ -23,6 +23,8 @@ endif()
 
 rosidl_generate_interfaces(roboneuron_interfaces
   "msg/EEFDeltaCommand.msg"
+  "msg/RawActionChunk.msg"
+  "msg/TaskSpaceState.msg"
 )
 
 ament_package()
