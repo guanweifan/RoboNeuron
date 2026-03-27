@@ -3,7 +3,7 @@ name = "roboneuron"
 version = "0.1.0"
 description = "ROS2-native middleware for perception, VLA inference, control, and MCP exposure in embodied AI systems"
 readme = "README.md"
-requires-python = ">=3.10.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "ikpy>=3.4.2",
     "json-numpy>=2.1.1",
@@ -13,6 +13,7 @@ dependencies = [
     "opencv-python-headless>=4.11.0.86",
     "pillow>=12.0.0",
     "pydantic>=2.11.0,<3",
+    "pyyaml>=6.0.3",
     "torch>=2.9.1",
 ]
 
@@ -45,11 +46,11 @@ dev = [
 
 [tool.black]
 line-length = 100
-target-version = ["py310"]
+target-version = ["py312"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM"]
@@ -67,7 +68,7 @@ markers = [
 ]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true

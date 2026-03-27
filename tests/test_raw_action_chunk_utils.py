@@ -6,7 +6,7 @@ import types
 import numpy as np
 
 
-def _install_fake_raw_action_chunk_module() -> None:
+def _install_fake_raw_action_chunk_module(monkeypatch) -> None:
     fake_roboneuron_interfaces = types.ModuleType("roboneuron_interfaces")
     fake_roboneuron_interfaces_msg = types.ModuleType("roboneuron_interfaces.msg")
 
@@ -22,12 +22,12 @@ def _install_fake_raw_action_chunk_module() -> None:
     fake_roboneuron_interfaces_msg.RawActionChunk = FakeRawActionChunk
     fake_roboneuron_interfaces.msg = fake_roboneuron_interfaces_msg
 
-    sys.modules["roboneuron_interfaces"] = fake_roboneuron_interfaces
-    sys.modules["roboneuron_interfaces.msg"] = fake_roboneuron_interfaces_msg
+    monkeypatch.setitem(sys.modules, "roboneuron_interfaces", fake_roboneuron_interfaces)
+    monkeypatch.setitem(sys.modules, "roboneuron_interfaces.msg", fake_roboneuron_interfaces_msg)
 
 
-def test_raw_action_chunk_round_trip() -> None:
-    _install_fake_raw_action_chunk_module()
+def test_raw_action_chunk_round_trip(monkeypatch) -> None:
+    _install_fake_raw_action_chunk_module(monkeypatch)
 
     from roboneuron_core.utils.raw_action_chunk import (
         array_to_raw_action_chunk_message,

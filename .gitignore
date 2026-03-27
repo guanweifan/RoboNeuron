@@ -16,6 +16,7 @@ site/
 .eggs/
 pip-wheel-metadata/
 wheels/
+flash_attn-*.whl
 
 # Test / lint / type-check cache
 .pytest_cache/
@@ -65,6 +66,7 @@ ros/log/
 ros/**/build/
 ros/**/install/
 ros/**/log/
+ros/src/control_msgs/
 
 # ROS bag / database artifacts
 *.bag

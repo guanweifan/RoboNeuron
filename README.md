@@ -1,8 +1,8 @@
 # RoboNeuron: A Modular Framework Linking Foundation Models and ROS for Embodied AI
 
 [![arXiv](https://img.shields.io/badge/arXiv-2512.10394-b31b1b.svg)](https://arxiv.org/abs/2512.10394)
-[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![ROS](https://img.shields.io/badge/ROS-Humble-blue.svg)](https://docs.ros.org/en/humble/)
+[![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![ROS](https://img.shields.io/badge/ROS-Jazzy-blue.svg)](https://docs.ros.org/en/jazzy/)
 
 <p align="center">
   <img src="./assets/logo.png" width="500"
@@ -98,10 +98,12 @@ For a more opinionated analysis of the current structure and future direction, s
 
 ### Prerequisites
 
-- **Python 3.10+**
-- **ROS 2 Humble** (recommended)
+- **Python 3.12+**
+- **ROS 2 Jazzy** (recommended)
 - **UV** Python package manager
 - **CLine** (VS Code Extension): Required for acting as the MCP Client to orchestrate the AI models and tools.
+
+ROS 2 Humble is still supported, but this README now defaults to Jazzy paths and examples. If you use Humble, you need to replace the distro-specific commands and paths yourself, and align the local Python / ROS package setup for that distro.
 
 ### Step 1: Install UV Package Manager
 
@@ -112,21 +114,23 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ### Step 2: Set Up ROS 2 Environment
 
 ```bash
-# Install ROS 2 Humble (Ubuntu 22.04)
-# Follow official instructions: https://docs.ros.org/en/humble/Installation.html
+# Install ROS 2 Jazzy (Ubuntu 24.04)
+# Follow official instructions: https://docs.ros.org/en/jazzy/Installation.html
 
 # Source ROS 2 environment
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 ```
+
+If you use ROS 2 Humble instead, replace the Jazzy path above with `/opt/ros/humble/setup.bash` and adjust any distro-specific package installation steps accordingly.
 
 ### Step 3: Clone and Install RoboNeuron
 
 ```bash
-# Clone the repository
-git clone https://github.com/guanweifan/RoboNeuron.git
+# Clone the repository together with tracked VLA source submodules
+git clone --recurse-submodules https://github.com/guanweifan/RoboNeuron.git
 cd roboneuron
 
-# Install dependencies
+# Install dependencies for the main RoboNeuron environment (Python 3.12)
 uv sync
 ```
 
@@ -158,7 +162,7 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
     "command": "bash",
     "args": [
       "-c",
-      "source /opt/ros/humble/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-perception"
+      "source /opt/ros/jazzy/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-perception"
     ],
     "cwd": "/home/user/roboneuron"
     },
@@ -170,7 +174,7 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
     "command": "bash",
     "args": [
       "-c",
-      "source /opt/ros/humble/setup.bash && source /home/user/roboneuron/ros/install/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-vla"
+      "source /opt/ros/jazzy/setup.bash && source /home/user/roboneuron/ros/install/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-vla"
     ],
     "cwd": "/home/user/roboneuron"
     },
@@ -182,7 +186,7 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
     "command": "bash",
     "args": [
       "-c",
-      "source /opt/ros/humble/setup.bash && source /home/user/roboneuron/ros/install/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-control"
+      "source /opt/ros/jazzy/setup.bash && source /home/user/roboneuron/ros/install/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-control"
     ],
     "cwd": "/home/user/roboneuron"
     },
@@ -194,7 +198,7 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
     "command": "bash",
     "args": [
       "-c",
-      "source /opt/ros/humble/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-twist"
+      "source /opt/ros/jazzy/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-twist"
     ],
     "cwd": "/home/user/roboneuron"
     },
@@ -206,7 +210,7 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
     "command": "bash",
     "args": [
       "-c",
-      "source /opt/ros/humble/setup.bash && source /home/user/roboneuron/ros/install/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-eef-delta"
+      "source /opt/ros/jazzy/setup.bash && source /home/user/roboneuron/ros/install/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-eef-delta"
     ],
     "cwd": "/home/user/roboneuron"
     }
@@ -219,6 +223,8 @@ For OpenClaw workflows, the repo-scoped `mcporter` configuration now lives at `c
 ### Step 6: Set Up the Dedicated OpenVLA Runtime
 
 OpenVLA now runs in its own Python environment instead of the main RoboNeuron environment. This keeps the primary `uv sync` environment minimal and isolates model-specific dependencies such as `transformers`, `flash-attn`, and vendored `prismatic`.
+
+The main RoboNeuron environment now targets Python 3.12 / ROS 2 Jazzy, while the dedicated `openvla` and `openvla-oft` runtimes stay on Python 3.10 to match the upstream OpenVLA dependency stack.
 
 Create the runtime with:
 

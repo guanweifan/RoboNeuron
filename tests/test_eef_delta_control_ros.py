@@ -23,7 +23,7 @@ os.environ.setdefault("ROS_LOG_DIR", str(DEFAULT_ROS_LOG_DIR))
 
 rclpy = pytest.importorskip(
     "rclpy",
-    reason="ROS 2 runtime not available. Source /opt/ros/humble/setup.bash first.",
+    reason="ROS 2 runtime not available. Source /opt/ros/jazzy/setup.bash first.",
 )
 pytest.importorskip(
     "roboneuron_interfaces.msg",
@@ -31,16 +31,17 @@ pytest.importorskip(
 )
 pytest.importorskip(
     "sensor_msgs.msg",
-    reason="sensor_msgs is not available. Source /opt/ros/humble/setup.bash first.",
+    reason="sensor_msgs is not available. Source /opt/ros/jazzy/setup.bash first.",
 )
 
 from rclpy.executors import SingleThreadedExecutor
 from sensor_msgs.msg import JointState
 
 pytestmark = [pytest.mark.integration, pytest.mark.ros]
-TEST_EEF_DELTA_TOPIC = "/test_eef_delta_cmd"
-TEST_STATE_TOPIC = "/test_eef_delta_joint_states"
-TEST_COMMAND_TOPIC = "/test_eef_delta_joint_commands"
+_TEST_TOPIC_SUFFIX = f"{os.getpid()}_{time.time_ns()}"
+TEST_EEF_DELTA_TOPIC = f"/test_eef_delta_cmd_{_TEST_TOPIC_SUFFIX}"
+TEST_STATE_TOPIC = f"/test_eef_delta_joint_states_{_TEST_TOPIC_SUFFIX}"
+TEST_COMMAND_TOPIC = f"/test_eef_delta_joint_commands_{_TEST_TOPIC_SUFFIX}"
 
 PANDA_JOINT_NAMES = [
     "panda_joint1",
@@ -64,6 +65,20 @@ def _wait_until(predicate: Any, executor: SingleThreadedExecutor, timeout_sec: f
     return False
 
 
+def _ensure_ros_node(module: ModuleType, skip_message: str) -> None:
+    if getattr(module, "ros_node", None) is not None:
+        return
+
+    init_ros_node = getattr(module, "init_ros_node", None)
+    if callable(init_ros_node):
+        if rclpy.ok():
+            rclpy.shutdown()
+        init_ros_node()
+
+    if getattr(module, "ros_node", None) is None:
+        pytest.skip(skip_message)
+
+
 @pytest.fixture
 def eef_delta_server_module(monkeypatch: pytest.MonkeyPatch) -> Any:
     import roboneuron_core.utils.eef_delta as eef_delta_utils
@@ -81,8 +96,7 @@ def eef_delta_server_module(monkeypatch: pytest.MonkeyPatch) -> Any:
         del sys.modules[module_name]
 
     module: ModuleType = importlib.import_module(module_name)
-    if getattr(module, "ros_node", None) is None:
-        pytest.skip("eef_delta_server could not initialize its ROS node in this environment.")
+    _ensure_ros_node(module, "eef_delta_server could not initialize its ROS node in this environment.")
     yield module
 
     ros_node = getattr(module, "ros_node", None)

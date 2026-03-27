@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 import rclpy
-from control_msgs.action import GripperCommand as GripperCommandAction
 from geometry_msgs.msg import PoseStamped
 from mcp.server.fastmcp import FastMCP
 from rclpy.action import ActionClient
@@ -65,6 +64,17 @@ DEFAULT_GRIPPER_STATE_CLOSED_POSITION = 0.0
 DEFAULT_GRIPPER_ACTION_OPEN_POSITION = 0.08
 DEFAULT_GRIPPER_ACTION_CLOSED_POSITION = 0.0
 DEFAULT_GRIPPER_MAX_EFFORT = 20.0
+
+
+def _load_gripper_command_action() -> type[Any]:
+    try:
+        from control_msgs.action import GripperCommand as gripper_command_action
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "control_msgs is required when gripper_action_name is configured. "
+            "Install the ROS 2 Jazzy control message package on this machine."
+        ) from exc
+    return gripper_command_action
 
 
 def _project_root() -> Path:
@@ -278,8 +288,9 @@ class ControlRuntimeNode(Node):
         self._gripper_joint_name_set = set(self._gripper_joint_names)
         self._gripper_state_open_position = float(gripper_state_open_position)
         self._gripper_state_closed_position = float(gripper_state_closed_position)
+        self._gripper_action_type = _load_gripper_command_action() if gripper_action_name else None
         self._gripper_action_client = (
-            ActionClient(self, GripperCommandAction, gripper_action_name)
+            ActionClient(self, self._gripper_action_type, gripper_action_name)
             if gripper_action_name
             else None
         )
@@ -489,7 +500,10 @@ class ControlRuntimeNode(Node):
                 return
             self._gripper_server_warned = False
 
-        goal = GripperCommandAction.Goal()
+        if self._gripper_action_type is None:
+            return
+
+        goal = self._gripper_action_type.Goal()
         goal.command.position = target_position
         goal.command.max_effort = self._gripper_max_effort
         self._gripper_action_client.send_goal_async(goal)

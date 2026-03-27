@@ -5,9 +5,10 @@ import sys
 import types
 
 
-def _install_fake_ros_modules() -> None:
+def _install_fake_ros_modules(monkeypatch) -> None:
     fake_rclpy = types.ModuleType("rclpy")
     fake_rclpy.init = lambda *args, **kwargs: None
+    fake_rclpy.ok = lambda: False
     fake_rclpy.shutdown = lambda *args, **kwargs: None
     fake_rclpy.spin = lambda *args, **kwargs: None
 
@@ -37,15 +38,15 @@ def _install_fake_ros_modules() -> None:
     fake_sensor_msgs_msg.Image = FakeRosImage
     fake_sensor_msgs.msg = fake_sensor_msgs_msg
 
-    sys.modules["rclpy"] = fake_rclpy
-    sys.modules["rclpy.node"] = fake_rclpy_node
-    sys.modules["cv_bridge"] = fake_cv_bridge
-    sys.modules["sensor_msgs"] = fake_sensor_msgs
-    sys.modules["sensor_msgs.msg"] = fake_sensor_msgs_msg
+    monkeypatch.setitem(sys.modules, "rclpy", fake_rclpy)
+    monkeypatch.setitem(sys.modules, "rclpy.node", fake_rclpy_node)
+    monkeypatch.setitem(sys.modules, "cv_bridge", fake_cv_bridge)
+    monkeypatch.setitem(sys.modules, "sensor_msgs", fake_sensor_msgs)
+    monkeypatch.setitem(sys.modules, "sensor_msgs.msg", fake_sensor_msgs_msg)
 
 
 def test_start_camera_allows_multiple_topics(monkeypatch) -> None:
-    _install_fake_ros_modules()
+    _install_fake_ros_modules(monkeypatch)
     module_name = "roboneuron_core.servers.perception_server"
     sys.modules.pop(module_name, None)
     perception_server = importlib.import_module(module_name)
@@ -93,7 +94,7 @@ def test_start_camera_allows_multiple_topics(monkeypatch) -> None:
 
 
 def test_stop_camera_can_stop_single_topic_or_all(monkeypatch) -> None:
-    _install_fake_ros_modules()
+    _install_fake_ros_modules(monkeypatch)
     module_name = "roboneuron_core.servers.perception_server"
     sys.modules.pop(module_name, None)
     perception_server = importlib.import_module(module_name)

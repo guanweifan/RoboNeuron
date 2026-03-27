@@ -149,7 +149,7 @@ def _load_ros_runtime() -> tuple[Any, type[Any]]:
     except ModuleNotFoundError as exc:
         raise RuntimeError(
             "ROS Python packages are not available in this interpreter. "
-            "Source `/opt/ros/humble/setup.bash` and your ROS workspace, and do not overwrite "
+            "Source `/opt/ros/jazzy/setup.bash` and your ROS workspace, and do not overwrite "
             "`PYTHONPATH`. Use `PYTHONPATH=src:$PYTHONPATH` or run "
             "`python -m roboneuron_core.servers.vla_server` from the repo root."
         ) from exc

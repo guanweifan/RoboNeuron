@@ -23,11 +23,11 @@ os.environ.setdefault("ROS_LOG_DIR", str(DEFAULT_ROS_LOG_DIR))
 
 rclpy = pytest.importorskip(
     "rclpy",
-    reason="ROS 2 runtime not available. Source /opt/ros/humble/setup.bash first.",
+    reason="ROS 2 runtime not available. Source /opt/ros/jazzy/setup.bash first.",
 )
 pytest.importorskip(
     "geometry_msgs.msg",
-    reason="geometry_msgs is not available. Source /opt/ros/humble/setup.bash first.",
+    reason="geometry_msgs is not available. Source /opt/ros/jazzy/setup.bash first.",
 )
 
 from geometry_msgs.msg import Twist
@@ -49,6 +49,20 @@ def _wait_for_messages(
     return False
 
 
+def _ensure_ros_node(module: ModuleType, skip_message: str) -> None:
+    if getattr(module, "ros_node", None) is not None:
+        return
+
+    init_ros_node = getattr(module, "init_ros_node", None)
+    if callable(init_ros_node):
+        if rclpy.ok():
+            rclpy.shutdown()
+        init_ros_node()
+
+    if getattr(module, "ros_node", None) is None:
+        pytest.skip(skip_message)
+
+
 @pytest.fixture
 def twist_server_module() -> Any:
     module_name = "roboneuron_core.servers.generated.twist_server"
@@ -67,16 +81,16 @@ def twist_server_module() -> Any:
     except ModuleNotFoundError as exc:
         pytest.fail(
             f"Failed to import Twist MCP server: {exc}. Run this test with "
-            "`source /opt/ros/humble/setup.bash && uv run pytest ...`.",
+            "`source /opt/ros/jazzy/setup.bash && uv run pytest ...`.",
             pytrace=False,
         )
 
     try:
-        if module.ros_node is None:
-            pytest.skip(
-                "twist_server could not initialize its ROS node. "
-                "Ensure DDS transport permissions are available in this environment."
-            )
+        _ensure_ros_node(
+            module,
+            "twist_server could not initialize its ROS node. "
+            "Ensure DDS transport permissions are available in this environment.",
+        )
         yield module
     finally:
         ros_node = getattr(module, "ros_node", None)

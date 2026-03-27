@@ -6,7 +6,7 @@ import types
 import numpy as np
 
 
-def _install_fake_task_space_state_module() -> None:
+def _install_fake_task_space_state_module(monkeypatch) -> None:
     fake_roboneuron_interfaces = types.ModuleType("roboneuron_interfaces")
     fake_roboneuron_interfaces_msg = types.ModuleType("roboneuron_interfaces.msg")
 
@@ -23,12 +23,12 @@ def _install_fake_task_space_state_module() -> None:
     fake_roboneuron_interfaces_msg.TaskSpaceState = FakeTaskSpaceState
     fake_roboneuron_interfaces.msg = fake_roboneuron_interfaces_msg
 
-    sys.modules["roboneuron_interfaces"] = fake_roboneuron_interfaces
-    sys.modules["roboneuron_interfaces.msg"] = fake_roboneuron_interfaces_msg
+    monkeypatch.setitem(sys.modules, "roboneuron_interfaces", fake_roboneuron_interfaces)
+    monkeypatch.setitem(sys.modules, "roboneuron_interfaces.msg", fake_roboneuron_interfaces_msg)
 
 
-def test_task_space_state_round_trip() -> None:
-    _install_fake_task_space_state_module()
+def test_task_space_state_round_trip(monkeypatch) -> None:
+    _install_fake_task_space_state_module(monkeypatch)
 
     from roboneuron_core.utils.task_space_state import (
         array_to_task_space_state_message,
@@ -43,8 +43,8 @@ def test_task_space_state_round_trip() -> None:
     np.testing.assert_allclose(decoded, state)
 
 
-def test_quaternion_xyzw_to_rpy_identity() -> None:
-    _install_fake_task_space_state_module()
+def test_quaternion_xyzw_to_rpy_identity(monkeypatch) -> None:
+    _install_fake_task_space_state_module(monkeypatch)
 
     from roboneuron_core.utils.task_space_state import quaternion_xyzw_to_rpy
 
@@ -53,8 +53,8 @@ def test_quaternion_xyzw_to_rpy_identity() -> None:
     np.testing.assert_allclose(rpy, np.zeros((3,), dtype=np.float64))
 
 
-def test_extract_gripper_open_fraction_from_joint_state_uses_named_fingers() -> None:
-    _install_fake_task_space_state_module()
+def test_extract_gripper_open_fraction_from_joint_state_uses_named_fingers(monkeypatch) -> None:
+    _install_fake_task_space_state_module(monkeypatch)
 
     from roboneuron_core.utils.task_space_state import (
         extract_gripper_open_fraction_from_joint_state,
@@ -71,8 +71,8 @@ def test_extract_gripper_open_fraction_from_joint_state_uses_named_fingers() -> 
     assert open_fraction == 0.5
 
 
-def test_pose_and_gripper_to_state_vector_combines_pose_and_gripper() -> None:
-    _install_fake_task_space_state_module()
+def test_pose_and_gripper_to_state_vector_combines_pose_and_gripper(monkeypatch) -> None:
+    _install_fake_task_space_state_module(monkeypatch)
 
     from roboneuron_core.utils.task_space_state import pose_and_gripper_to_state_vector
 

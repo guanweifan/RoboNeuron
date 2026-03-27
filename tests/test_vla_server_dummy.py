@@ -9,9 +9,10 @@ import types
 from roboneuron_core.adapters.vla.dummy_vla import DummyVLAWrapper
 
 
-def _install_fake_ros_modules() -> None:
+def _install_fake_ros_modules(monkeypatch) -> None:
     fake_rclpy = types.ModuleType("rclpy")
     fake_rclpy.init = lambda *args, **kwargs: None
+    fake_rclpy.ok = lambda: False
     fake_rclpy.shutdown = lambda *args, **kwargs: None
     fake_rclpy.spin = lambda *args, **kwargs: None
 
@@ -78,17 +79,17 @@ def _install_fake_ros_modules() -> None:
     fake_roboneuron_interfaces_msg.TaskSpaceState = FakeTaskSpaceState
     fake_roboneuron_interfaces.msg = fake_roboneuron_interfaces_msg
 
-    sys.modules["rclpy"] = fake_rclpy
-    sys.modules["rclpy.node"] = fake_rclpy_node
-    sys.modules["cv_bridge"] = fake_cv_bridge
-    sys.modules["sensor_msgs"] = fake_sensor_msgs
-    sys.modules["sensor_msgs.msg"] = fake_sensor_msgs_msg
-    sys.modules["roboneuron_interfaces"] = fake_roboneuron_interfaces
-    sys.modules["roboneuron_interfaces.msg"] = fake_roboneuron_interfaces_msg
+    monkeypatch.setitem(sys.modules, "rclpy", fake_rclpy)
+    monkeypatch.setitem(sys.modules, "rclpy.node", fake_rclpy_node)
+    monkeypatch.setitem(sys.modules, "cv_bridge", fake_cv_bridge)
+    monkeypatch.setitem(sys.modules, "sensor_msgs", fake_sensor_msgs)
+    monkeypatch.setitem(sys.modules, "sensor_msgs.msg", fake_sensor_msgs_msg)
+    monkeypatch.setitem(sys.modules, "roboneuron_interfaces", fake_roboneuron_interfaces)
+    monkeypatch.setitem(sys.modules, "roboneuron_interfaces.msg", fake_roboneuron_interfaces_msg)
 
 
 def test_start_vla_inference_allows_dummy_without_model_path(monkeypatch) -> None:
-    _install_fake_ros_modules()
+    _install_fake_ros_modules(monkeypatch)
     module_name = "roboneuron_core.servers.vla_server"
     sys.modules.pop(module_name, None)
     sys.modules.pop("roboneuron_core.utils.eef_delta", None)

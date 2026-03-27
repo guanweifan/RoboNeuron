@@ -23,7 +23,7 @@ os.environ.setdefault("ROS_LOG_DIR", str(DEFAULT_ROS_LOG_DIR))
 
 rclpy = pytest.importorskip(
     "rclpy",
-    reason="ROS 2 runtime not available. Source /opt/ros/humble/setup.bash first.",
+    reason="ROS 2 runtime not available. Source /opt/ros/jazzy/setup.bash first.",
 )
 pytest.importorskip(
     "roboneuron_interfaces.msg",
@@ -34,7 +34,8 @@ from roboneuron_interfaces.msg import EEFDeltaCommand
 from rclpy.executors import SingleThreadedExecutor
 
 pytestmark = [pytest.mark.integration, pytest.mark.ros]
-TEST_EEF_DELTA_TOPIC = "/test_eef_delta_cmd"
+_TEST_TOPIC_SUFFIX = f"{os.getpid()}_{time.time_ns()}"
+TEST_EEF_DELTA_TOPIC = f"/test_eef_delta_cmd_{_TEST_TOPIC_SUFFIX}"
 
 
 def _wait_for_messages(
@@ -48,6 +49,20 @@ def _wait_for_messages(
         if received:
             return True
     return False
+
+
+def _ensure_ros_node(module: ModuleType, skip_message: str) -> None:
+    if getattr(module, "ros_node", None) is not None:
+        return
+
+    init_ros_node = getattr(module, "init_ros_node", None)
+    if callable(init_ros_node):
+        if rclpy.ok():
+            rclpy.shutdown()
+        init_ros_node()
+
+    if getattr(module, "ros_node", None) is None:
+        pytest.skip(skip_message)
 
 
 @pytest.fixture
@@ -71,16 +86,16 @@ def eef_delta_server_module(monkeypatch: pytest.MonkeyPatch) -> Any:
     except ModuleNotFoundError as exc:
         pytest.fail(
             f"Failed to import EEF delta MCP server: {exc}. Run this test with "
-            "`source /opt/ros/humble/setup.bash && uv run pytest ...`.",
+            "`source /opt/ros/jazzy/setup.bash && uv run pytest ...`.",
             pytrace=False,
         )
 
     try:
-        if module.ros_node is None:
-            pytest.skip(
-                "eef_delta_server could not initialize its ROS node. "
-                "Ensure DDS transport permissions are available in this environment."
-            )
+        _ensure_ros_node(
+            module,
+            "eef_delta_server could not initialize its ROS node. "
+            "Ensure DDS transport permissions are available in this environment.",
+        )
         yield module
     finally:
         ros_node = getattr(module, "ros_node", None)
