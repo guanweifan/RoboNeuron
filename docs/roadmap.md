@@ -82,14 +82,14 @@ A platform that integrates execution with benchmarking and automated workflows.
 ### Phase A — Hardening the Core
 - [x] Define `StateSnapshot` and `ActionContract` primitives.
 - [x] Architect `ExecutionSession` lifecycle management.
-- [ ] Enforce module boundaries: interfaces, core, edge, backends.
+- [x] Enforce module boundaries: interfaces, core, edge, backends.
 - [x] Draft schema: lifecycle, event, trace, profile.
 - [ ] Finalize the Kernel Spec as the source of truth.
 
 ### Phase B — Closing the Loop
 - [ ] Implement the core -> edge -> backend communication link.
 - [ ] Develop the Franka backend driver.
-- [ ] Build the local resolver and control runtime.
+- [x] Build the local resolver and control runtime.
 - [ ] Connect OpenVLA/OFT to output `RawActionChunk`.
 - [ ] Deploy a thin entry via OpenClaw.
 - [ ] Release the Quickstart Guide.
@@ -144,7 +144,7 @@ A platform that integrates execution with benchmarking and automated workflows.
 
 **D. Canonical Path Definition**
 - [ ] Formalize the canonical path: remote core + local edge + Franka + OpenVLA/OFT + `RawActionChunk`.
-- [ ] Define the ownership of local state alignment and local resolving on edge.
+- [x] Define the ownership of local state alignment and local resolving on edge.
 - [ ] Define the minimum operational surface required for Phase B validation.
 
 **E. Kernel Spec**

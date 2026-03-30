@@ -10,7 +10,6 @@ from typing import Any
 
 import json_numpy
 import numpy as np
-import torch
 from mcp.server.fastmcp import FastMCP
 from PIL import Image
 
@@ -31,6 +30,11 @@ _VLA_SESSION: ExecutionSession | None = None
 _VLA_HEALTH = HealthStatus.idle("roboneuron-vla")
 EEF_DELTA_CMD_TOPIC = "/eef_delta_cmd"
 mcp = FastMCP("roboneuron-vla")
+
+try:
+    import torch
+except ModuleNotFoundError:  # pragma: no cover - optional dependency path
+    torch = None
 
 
 def _project_root() -> Path:
@@ -144,6 +148,18 @@ def _build_model_observation(
     return observation, {}
 
 
+def _require_torch(model_name: str | None = None):
+    if model_name == "dummy":
+        return None
+    if torch is None:
+        raise RuntimeError(
+            "PyTorch is required for the RoboNeuron VLA runtime. "
+            "Install the optional `vla` extra, for example with "
+            "`uv sync --extra vla` or `uv run --extra vla roboneuron-mcp-vla`."
+        )
+    return torch
+
+
 def _load_ros_runtime() -> tuple[Any, type[Any]]:
     try:
         import rclpy
@@ -182,8 +198,17 @@ def _load_ros_runtime() -> tuple[Any, type[Any]]:
             state_topic: str | None = None,
         ):
             super().__init__("vla_server_node")
+            torch_module = _require_torch(model_name)
             self._model_name = model_name
-            self._device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+            self._device = (
+                (
+                    torch_module.device("cuda:0")
+                    if torch_module.cuda.is_available()
+                    else torch_module.device("cpu")
+                )
+                if torch_module is not None
+                else "cpu"
+            )
             self._instruction = instruction
             self._output_mode = output_mode
             self._action_protocol = action_protocol
@@ -297,6 +322,8 @@ def _run_local_test(
         print(f"Error: model '{model_name}' not found in registry.")
         return 1
 
+    torch_module = torch
+
     try:
         resolved_model_path, model_kwargs = _resolve_model_spec(model_name, model_path)
     except Exception as exc:
@@ -304,7 +331,17 @@ def _run_local_test(
         return 1
 
     wrapper_class = registry[model_name]
-    wrapper_kwargs = {"device": torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")}
+    wrapper_kwargs = {
+        "device": (
+            (
+                torch_module.device("cuda:0")
+                if torch_module.cuda.is_available()
+                else torch_module.device("cpu")
+            )
+            if torch_module is not None
+            else "cpu"
+        )
+    }
     wrapper_kwargs.update(model_kwargs)
     model = wrapper_class(resolved_model_path, **wrapper_kwargs)
 
@@ -418,6 +455,11 @@ def start_vla_inference(
     try:
         registry = get_registry()
         if model_name not in registry:
+            try:
+                _require_torch(model_name)
+            except RuntimeError as exc:
+                _VLA_HEALTH = HealthStatus.error("roboneuron-vla", summary=str(exc))
+                return f"Error: {exc}"
             _VLA_HEALTH = HealthStatus.error(
                 "roboneuron-vla",
                 summary=f"model '{model_name}' not found in registry",
@@ -430,6 +472,12 @@ def start_vla_inference(
             details={"error": str(e)},
         )
         return f"Error: failed to access model registry: {e}"
+
+    try:
+        _require_torch(model_name)
+    except RuntimeError as exc:
+        _VLA_HEALTH = HealthStatus.error("roboneuron-vla", summary=str(exc))
+        return f"Error: {exc}"
 
     try:
         model_path, model_kwargs = _resolve_model_spec(model_name, model_path)

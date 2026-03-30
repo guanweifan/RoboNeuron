@@ -14,6 +14,10 @@ dependencies = [
     "pillow>=12.0.0",
     "pydantic>=2.11.0,<3",
     "pyyaml>=6.0.3",
+]
+
+[project.optional-dependencies]
+vla = [
     "torch>=2.9.1",
 ]
 
@@ -25,7 +29,7 @@ build-backend = "hatchling.build"
 package = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/roboneuron_core"]
+packages = ["src/roboneuron_backends", "src/roboneuron_core", "src/roboneuron_edge"]
 
 [project.scripts]
 roboneuron-mcp-perception = "roboneuron_core.cli.mcp_entrypoints:mcp_perception"
@@ -79,14 +83,19 @@ disallow_incomplete_defs = true
 check_untyped_defs = true
 no_implicit_optional = true
 files = [
+    "src/roboneuron_backends",
     "src/roboneuron_core/adapters",
     "src/roboneuron_core/cli",
+    "src/roboneuron_core/kernel",
+    "src/roboneuron_core/runtime",
     "src/roboneuron_core/utils",
+    "src/roboneuron_edge",
     "tests",
 ]
 exclude = [
     "^third_party/vla_src/",
     "^src/roboneuron_core/servers/",
+    "^src/roboneuron_edge/servers/",
 ]
 
 [[tool.mypy.overrides]]
@@ -95,4 +104,8 @@ ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = ["roboneuron_core.adapters.*"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = ["roboneuron_edge.servers.*"]
 ignore_errors = true

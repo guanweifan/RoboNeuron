@@ -96,7 +96,7 @@ def test_eef_delta_drives_live_isaac_joint_command_output(
     if not rclpy.ok():
         rclpy.init()
 
-    from roboneuron_core.servers.control_server import AutoIKNode
+    from roboneuron_edge.servers.control_server import AutoIKNode
 
     urdf_path = str(ROOT / "urdf" / "panda.urdf")
     control_node = AutoIKNode(

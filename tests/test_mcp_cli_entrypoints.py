@@ -30,7 +30,7 @@ class TestMcpCliEntrypoints(unittest.TestCase):
     def test_mcp_control_routes(self) -> None:
         self._assert_routed(
             mcp_entrypoints.mcp_control,
-            "roboneuron_core.servers.control_server",
+            "roboneuron_edge.servers.control_server",
         )
 
     def test_mcp_twist_routes(self) -> None:

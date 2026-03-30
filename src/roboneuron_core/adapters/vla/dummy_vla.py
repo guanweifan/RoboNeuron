@@ -1,4 +1,4 @@
-"""Lightweight VLA wrapper for end-to-end pipeline validation."""
+"""Lightweight torch-free VLA wrapper for end-to-end pipeline validation."""
 
 from __future__ import annotations
 
@@ -8,8 +8,6 @@ from typing import Any
 
 import numpy as np
 from PIL import Image
-import torch
-import torch.nn as nn
 
 from .base import ModelWrapper
 
@@ -18,51 +16,30 @@ logger = logging.getLogger(__name__)
 DUMMY_MODEL_PATH = "__dummy_vla__"
 
 
-class DummyVLAModel(nn.Module):
-    """Small deterministic network that mimics the OpenVLA call shape."""
+class DummyVLAModel:
+    """Small deterministic numpy model that mimics the OpenVLA call shape."""
 
-    def __init__(self, img_size: int = 64, action_dim: int = 7, hidden_dim: int = 128) -> None:
-        super().__init__()
+    def __init__(self, img_size: int = 64, action_dim: int = 7) -> None:
         self.img_size = img_size
         self.action_dim = action_dim
-        self.hidden_dim = hidden_dim
+        self._offsets = np.linspace(-0.35, 0.35, action_dim, dtype=np.float32)
 
-        self.conv = nn.Sequential(
-            nn.Conv2d(3, 16, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(),
-        )
-        conv_out_size = (img_size // 4) * (img_size // 4) * 32
-        self.mlp = nn.Sequential(
-            nn.Linear(conv_out_size, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, action_dim),
-        )
-        self._initialize_weights()
-
-    def _initialize_weights(self) -> None:
-        for module in self.modules():
-            if isinstance(module, nn.Conv2d):
-                nn.init.constant_(module.weight, 0.01)
-                nn.init.zeros_(module.bias)
-            elif isinstance(module, nn.Linear):
-                nn.init.constant_(module.weight, 0.005)
-                nn.init.zeros_(module.bias)
-
-    def forward(self, img_tensor: torch.Tensor) -> torch.Tensor:
-        encoded = self.conv(img_tensor)
-        flattened = encoded.flatten(1)
-        return self.mlp(flattened)
-
-    @torch.no_grad()
     def predict_action(
         self,
-        pixel_values: torch.Tensor,
+        pixel_values: np.ndarray,
         **_: Any,
     ) -> np.ndarray:
-        logits = self(pixel_values)
-        return logits.cpu().numpy()
+        if pixel_values.ndim != 4:
+            raise ValueError(f"Expected a 4D image batch, got shape {pixel_values.shape}.")
+
+        channel_means = pixel_values.mean(axis=(2, 3))
+        base_signal = channel_means.mean(axis=1, keepdims=True)
+        contrast_signal = (channel_means[:, 1:2] - channel_means[:, :1]) * 0.25
+
+        action = np.repeat(base_signal, self.action_dim, axis=1) + self._offsets
+        action[:, 0:1] += contrast_signal
+        action[:, -1:] = np.clip(base_signal, 0.0, 1.0)
+        return np.clip(action, -1.0, 1.0).astype(np.float32, copy=False)
 
 
 class DummyVLAWrapper(ModelWrapper):
@@ -71,7 +48,7 @@ class DummyVLAWrapper(ModelWrapper):
     def __init__(
         self,
         model_path: str | Path = DUMMY_MODEL_PATH,
-        device: torch.device | None = None,
+        device: Any | None = None,
         img_size: int = 64,
         action_dim: int = 7,
         **kwargs: Any,
@@ -85,8 +62,7 @@ class DummyVLAWrapper(ModelWrapper):
         self.model = DummyVLAModel(
             img_size=self.img_size,
             action_dim=self.action_dim,
-            hidden_dim=128,
-        ).to(self.device)
+        )
         self.processor = True
         logger.info(
             "Loaded DummyVLAWrapper on device=%s img_size=%s action_dim=%s",
@@ -108,7 +84,5 @@ class DummyVLAWrapper(ModelWrapper):
 
         img = image.convert("RGB").resize((self.img_size, self.img_size))
         arr = np.asarray(img, dtype=np.float32) / 255.0
-        arr = np.transpose(arr, (2, 0, 1))
-        tensor = torch.from_numpy(arr).unsqueeze(0).to(self.device)
-
-        return self.model.predict_action(pixel_values=tensor)
+        pixel_values = np.transpose(arr, (2, 0, 1))[None, ...]
+        return self.model.predict_action(pixel_values=pixel_values)

@@ -88,7 +88,7 @@ def _install_fake_control_server_modules(monkeypatch) -> None:
 
 def test_start_controller_tracks_session_and_health(monkeypatch) -> None:
     _install_fake_control_server_modules(monkeypatch)
-    module_name = "roboneuron_core.servers.control_server"
+    module_name = "roboneuron_edge.servers.control_server"
     sys.modules.pop(module_name, None)
     control_server = importlib.import_module(module_name)
 
@@ -146,3 +146,45 @@ def test_start_controller_tracks_session_and_health(monkeypatch) -> None:
     assert control_server._CONTROL_SESSION.status == ExecutionSessionStatus.STOPPED
     assert control_server._CONTROL_SESSION.history[-1].details["requested_by"] == "mcp"
     assert control_server._CONTROL_HEALTH.level == HealthLevel.IDLE
+
+
+def test_resolve_controller_settings_allows_task_space_state_without_pose_topic(monkeypatch) -> None:
+    _install_fake_control_server_modules(monkeypatch)
+    module_name = "roboneuron_edge.servers.control_server"
+    sys.modules.pop(module_name, None)
+    control_server = importlib.import_module(module_name)
+
+    project_root = Path(__file__).resolve().parents[1]
+    resolved = control_server._resolve_controller_settings(
+        robot_profile=None,
+        config_path=None,
+        urdf_path=str(project_root / "urdf" / "fr3.urdf"),
+        cartesian_cmd_topic="/eef_delta_cmd",
+        state_feedback_topic="/franka/joint_states",
+        joint_cmd_topic="/fr3_arm_controller/joint_trajectory",
+        cmd_msg_type="JointTrajectory",
+        raw_action_topic="/raw_action_chunk",
+        raw_action_protocol="normalized_cartesian_velocity",
+        raw_action_frame="tool",
+        max_linear_delta=None,
+        max_rotation_delta=None,
+        invert_gripper_action=None,
+        trajectory_time_from_start_sec=None,
+        state_feedback_timeout_sec=None,
+        task_space_state_topic="/task_space_state",
+        pose_feedback_topic=None,
+        gripper_state_topic="/franka_gripper/joint_states",
+        task_space_frame_id="base",
+        gripper_action_name="/franka_gripper/gripper_action",
+        gripper_command_mode="joint_position",
+        gripper_state_open_position=None,
+        gripper_state_closed_position=None,
+        gripper_action_open_position=None,
+        gripper_action_closed_position=None,
+        gripper_max_effort=None,
+        gripper_joint_names=["fr3_finger_joint1", "fr3_finger_joint2"],
+    )
+
+    assert resolved["task_space_state_topic"] == "/task_space_state"
+    assert resolved["pose_feedback_topic"] is None
+    assert resolved["gripper_state_topic"] == "/franka_gripper/joint_states"

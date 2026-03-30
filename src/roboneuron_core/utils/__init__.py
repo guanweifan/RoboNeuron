@@ -1,6 +1,7 @@
 """Reusable utility modules for config, process, logging, and ROS schema parsing."""
 
 from roboneuron_core.kernel.contracts import DEFAULT_NORMALIZED_CARTESIAN_VELOCITY_PROTOCOL
+
 from .msg_parser import ROSMsgIndexer
 from .raw_action_chunk import RAW_ACTION_CHUNK_TOPIC
 from .task_space_state import TASK_SPACE_STATE_TOPIC

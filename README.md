@@ -60,13 +60,16 @@ roboneuron/
 ├── pyproject.toml
 ├── uv.lock
 ├── src/
-│   └── roboneuron_core/          # Core implementation
-│       ├── servers/              # Core runtime hosts: perception / vla / control
-│       │   └── generated/        # Generated MCP server modules for raw ROS message exposure
-│       ├── adapters/             # Camera and VLA wrappers only
-│       ├── runtime/              # Dedicated worker/client runtimes for heavy VLA stacks
-│       ├── cli/                  # MCP entrypoints and tool generation CLI
-│       └── utils/                # Internal support code used by core servers
+│   ├── roboneuron_core/          # Core runtime, kernel, adapters, and shared boundaries
+│   │   ├── servers/              # Core runtime hosts: perception / vla
+│   │   │   └── generated/        # Generated MCP server modules for raw ROS message exposure
+│   │   ├── adapters/             # Camera and VLA wrappers only
+│   │   ├── runtime/              # Dedicated worker/client runtimes for heavy VLA stacks
+│   │   ├── kernel/               # Shared runtime primitives and action semantics
+│   │   ├── cli/                  # MCP entrypoints and tool generation CLI
+│   │   └── utils/                # Shared boundary helpers used by core and edge
+│   ├── roboneuron_edge/          # Edge control host, state alignment, and local resolving
+│   └── roboneuron_backends/      # Robot backend integrations and vendor-facing glue
 ├── configs/                      # Configuration files
 │   ├── vla_models.json           # VLA model paths and runtime configuration
 │   └── openclaw/                 # OpenClaw-facing MCP launcher configuration
@@ -87,8 +90,9 @@ roboneuron/
 
 RoboNeuron should be understood through four layers:
 
-- **Core servers**: [perception_server.py](./src/roboneuron_core/servers/perception_server.py), [vla_server.py](./src/roboneuron_core/servers/vla_server.py), and [control_server.py](./src/roboneuron_core/servers/control_server.py) are the runtime spine.
-- **Wrappers and runtimes**: `adapters/` holds swappable camera/VLA wrappers, while `runtime/` isolates heavy model workers and protocols.
+- **Core**: [perception_server.py](./src/roboneuron_core/servers/perception_server.py), [vla_server.py](./src/roboneuron_core/servers/vla_server.py), `kernel/`, and the model/runtime stack live in `roboneuron_core`.
+- **Edge**: [control_server.py](./src/roboneuron_edge/servers/control_server.py), `runtime/`, and `state/` in `roboneuron_edge` own local resolving and state alignment.
+- **Backends**: `roboneuron_backends/` owns vendor-facing robot backend glue such as Franka metadata and integrations.
 - **ROS boundary**: `ros/roboneuron_interfaces` defines first-party message contracts used to connect RoboNeuron to ROS 2 systems.
 - **Integrations and configs**: `configs/` holds stable configuration, and `openclaw/` contains the first-class OpenClaw integration surface.
 
@@ -131,7 +135,11 @@ git clone --recurse-submodules https://github.com/guanweifan/RoboNeuron.git
 cd roboneuron
 
 # Install dependencies for the main RoboNeuron environment (Python 3.12)
+# This default environment stays minimal and does not install PyTorch.
 uv sync
+
+# Only install the VLA extra on machines that actually run RoboNeuron VLA services.
+uv sync --extra vla
 ```
 
 ### Step 4: Build the ROS Interface Workspace
@@ -174,7 +182,7 @@ Note: Please replace /home/user/roboneuron with the absolute path to your cloned
     "command": "bash",
     "args": [
       "-c",
-      "source /opt/ros/jazzy/setup.bash && source /home/user/roboneuron/ros/install/setup.bash && uv --directory /home/user/roboneuron run roboneuron-mcp-vla"
+      "source /opt/ros/jazzy/setup.bash && source /home/user/roboneuron/ros/install/setup.bash && uv --directory /home/user/roboneuron run --extra vla roboneuron-mcp-vla"
     ],
     "cwd": "/home/user/roboneuron"
     },
@@ -293,7 +301,7 @@ pytest -q tests/test_openvla_oft_deploy_smoke.py -m integration
 Canonical service entrypoints are:
 
 - `uv run roboneuron-mcp-perception`
-- `source ros/install/setup.bash && uv run roboneuron-mcp-vla`
+- `source ros/install/setup.bash && uv run --extra vla roboneuron-mcp-vla`
 - `source ros/install/setup.bash && uv run roboneuron-mcp-control`
 - `uv run roboneuron-mcp-twist`
 - `source ros/install/setup.bash && uv run roboneuron-mcp-eef-delta`

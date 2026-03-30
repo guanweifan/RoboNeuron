@@ -6,9 +6,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from roboneuron_core.kernel.contracts import ActionContract
-
-from .control_runtime import ActionChunk, RawActionStep
+from roboneuron_core.kernel import ActionChunk, ActionContract, RawActionStep
 
 RAW_ACTION_CHUNK_TOPIC = "/raw_action_chunk"
 
@@ -46,11 +44,11 @@ def array_to_raw_action_chunk_message(
 def raw_action_chunk_message_to_action_chunk(message: object) -> ActionChunk:
     """Convert a ``RawActionChunk`` ROS message into a semantic action chunk."""
 
-    action_dim = int(getattr(message, "action_dim"))
+    action_dim = int(message.action_dim)
     if action_dim <= 0:
         raise ValueError(f"RawActionChunk.action_dim must be positive, got {action_dim}.")
 
-    values = np.asarray(getattr(message, "values"), dtype=np.float64).reshape(-1)
+    values = np.asarray(message.values, dtype=np.float64).reshape(-1)
     if values.size % action_dim != 0:
         raise ValueError(
             f"Raw action payload length {values.size} is not divisible by action_dim {action_dim}."

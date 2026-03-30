@@ -2,10 +2,20 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import torch
 from PIL import Image
+
+if TYPE_CHECKING:
+    import torch
+
+
+def _default_device() -> Any:
+    try:
+        import torch
+    except ModuleNotFoundError:
+        return "cpu"
+    return torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 
 
 class ModelWrapper(ABC):
@@ -14,12 +24,12 @@ class ModelWrapper(ABC):
     def __init__(
         self,
         model_path: str | Path,
-        device: torch.device | None = None,
+        device: Any | None = None,
         **kwargs: Any,
     ) -> None:
         """Store model location, target device, and wrapper-specific options."""
         self.model_path = str(model_path)
-        self.device = device or (torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu"))
+        self.device = device if device is not None else _default_device()
         self.kwargs = kwargs
         self.model = None
         self.processor = None

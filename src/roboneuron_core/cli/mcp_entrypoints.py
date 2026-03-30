@@ -19,7 +19,7 @@ def mcp_vla() -> None:
 
 
 def mcp_control() -> None:
-    _run_module("roboneuron_core.servers.control_server")
+    _run_module("roboneuron_edge.servers.control_server")
 
 
 def mcp_twist() -> None:

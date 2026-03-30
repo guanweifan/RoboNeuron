@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import numpy as np
-import torch
+import pytest
+
+torch = pytest.importorskip("torch")
 from PIL import Image
 
 from roboneuron_core.adapters.vla.openvla_oft import OpenVLAOFTWrapper

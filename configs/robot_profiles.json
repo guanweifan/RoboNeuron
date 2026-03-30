@@ -1,7 +1,7 @@
 {
   "fr3_real": {
     "urdf_path": "urdf/fr3.urdf",
-    "state_feedback_topic": "/franka_robot_state_broadcaster/measured_joint_states",
+    "state_feedback_topic": "/joint_states",
     "joint_cmd_topic": "/fr3_arm_controller/joint_trajectory",
     "cmd_msg_type": "JointTrajectory",
     "cartesian_cmd_topic": "/eef_delta_cmd",
@@ -15,7 +15,7 @@
     "invert_gripper_action": false,
     "task_space_state": {
       "topic": "/task_space_state",
-      "pose_feedback_topic": "/franka_robot_state_broadcaster/current_pose",
+      "pose_feedback_topic": null,
       "gripper_state_topic": "/franka_gripper/joint_states",
       "frame_id": "base"
     },

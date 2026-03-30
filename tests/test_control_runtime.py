@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from roboneuron_core.utils.control_runtime import (
+from roboneuron_core.kernel import (
     DEFAULT_NORMALIZED_CARTESIAN_VELOCITY_PROTOCOL,
     ActionChunk,
     ActuationCommand,
-    ControlRuntime,
     RawActionStep,
 )
+from roboneuron_edge.runtime.control_runtime import ControlRuntime
 
 
 class FakeResolver:

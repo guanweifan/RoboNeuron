@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""
-RoboNeuron control server.
-
-This MCP service hosts the ROS-side control runtime that resolves incoming
-actions into robot command messages.
-"""
+"""RoboNeuron edge control server."""
 
 from __future__ import annotations
 
@@ -25,29 +20,31 @@ from roboneuron_interfaces.msg import EEFDeltaCommand, RawActionChunk, TaskSpace
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
+from roboneuron_backends.franka import backend_metadata_for_robot_profile
 from roboneuron_core.kernel import (
     DEFAULT_NORMALIZED_CARTESIAN_VELOCITY_PROTOCOL,
     TASK_SPACE_STATE_SOURCE,
+    ActionChunk,
     ActionContract,
     ExecutionSession,
     HealthStatus,
-    RuntimeProfile,
-)
-from roboneuron_core.utils.control_runtime import (
-    ActionChunk,
-    ControlRuntime,
     NormalizedCartesianVelocityConfig,
     RawActionStep,
-    URDFKinematicsResolver,
+    RuntimeProfile,
 )
 from roboneuron_core.utils.eef_delta import EEF_DELTA_CMD_TOPIC, eef_delta_command_to_array
 from roboneuron_core.utils.raw_action_chunk import (
     RAW_ACTION_CHUNK_TOPIC,
     raw_action_chunk_message_to_action_chunk,
 )
-from roboneuron_core.utils.task_space_state import (
-    array_to_task_space_state_message,
+from roboneuron_core.utils.task_space_state import array_to_task_space_state_message
+from roboneuron_edge.runtime.control_runtime import (
+    ControlRuntime,
+    URDFKinematicsResolver,
+)
+from roboneuron_edge.state.task_space_alignment import (
     extract_gripper_open_fraction_from_joint_state,
+    pose_matrix_to_state_vector,
     pose_and_gripper_to_state_vector,
 )
 
@@ -118,14 +115,6 @@ def _load_robot_profile(robot_profile: str, config_path: str | None = None) -> d
     if not isinstance(profile, dict):
         raise ValueError(f"Robot profile '{robot_profile}' not found in {cfg_path}.")
     return profile
-
-
-def _resolve_robot_backend(robot_profile: str | None) -> tuple[str | None, tuple[str, ...]]:
-    if robot_profile == "fr3_real":
-        return "franka", ("franka_ros2", "libfranka")
-    return None, ()
-
-
 def _resolve_controller_settings(
     *,
     robot_profile: str | None,
@@ -241,8 +230,6 @@ def _resolve_controller_settings(
     if resolved["gripper_command_mode"] not in {"width", "joint_position"}:
         raise ValueError("gripper_command_mode must be 'width' or 'joint_position'.")
     if resolved["task_space_state_topic"] is not None:
-        if not resolved["pose_feedback_topic"]:
-            raise ValueError("pose_feedback_topic is required when task_space_state_topic is enabled.")
         if not resolved["gripper_state_topic"]:
             raise ValueError("gripper_state_topic is required when task_space_state_topic is enabled.")
     return resolved
@@ -295,9 +282,16 @@ class ControlRuntimeNode(Node):
             if task_space_state_topic
             else None
         )
+        self._use_joint_fk_for_task_space_state = bool(task_space_state_topic and not pose_feedback_topic)
         self._latest_pose_position: list[float] | None = None
         self._latest_pose_orientation: list[float] | None = None
+        self._latest_pose_matrix = None
         self._latest_gripper_open_fraction: float | None = None
+        self._task_space_pose_ready_logged = False
+        self._task_space_gripper_ready_logged = False
+        self._task_space_publish_logged = False
+        self._raw_chunk_received_logged = False
+        self._raw_chunk_dispatch_logged = False
         self._pose_frame_mismatch_warned = False
         self._gripper_joint_names = tuple(gripper_joint_names or [])
         self._gripper_joint_name_set = set(self._gripper_joint_names)
@@ -326,6 +320,7 @@ class ControlRuntimeNode(Node):
             invert_gripper=invert_gripper_action,
         )
         resolver = URDFKinematicsResolver(urdf_path)
+        self._kinematics_resolver = resolver
         self.runtime = ControlRuntime(resolver, normalized_velocity_config=normalized_velocity_config)
 
         self.get_logger().info(f"Subscribing to Cartesian commands on: {cartesian_cmd_topic}")
@@ -337,6 +332,10 @@ class ControlRuntimeNode(Node):
             self.get_logger().info(f"Publishing task-space state to: {task_space_state_topic}")
         if pose_feedback_topic:
             self.get_logger().info(f"Subscribing to pose feedback on: {pose_feedback_topic}")
+        elif self._use_joint_fk_for_task_space_state:
+            self.get_logger().info(
+                "Deriving task-space pose from joint feedback via local forward kinematics."
+            )
         if gripper_state_topic and not self._gripper_state_from_joint_feedback:
             self.get_logger().info(f"Subscribing to gripper state on: {gripper_state_topic}")
         if gripper_action_name:
@@ -366,6 +365,8 @@ class ControlRuntimeNode(Node):
         self._state_feedback_stale_warned = False
         if self._gripper_state_from_joint_feedback:
             self._update_gripper_open_fraction(msg)
+        if self._use_joint_fk_for_task_space_state:
+            self._update_pose_from_joint_state()
 
     def cmd_cb(self, msg: EEFDeltaCommand) -> None:
         """Resolve a single EEF delta command immediately."""
@@ -403,6 +404,15 @@ class ControlRuntimeNode(Node):
                 metadata=chunk.metadata,
             )
             self.runtime.queue_action_chunk(normalized_chunk)
+            if not self._raw_chunk_received_logged:
+                self.get_logger().info(
+                    "Queued first raw action chunk: "
+                    f"steps={len(normalized_chunk.steps)} "
+                    f"step_duration_sec={normalized_chunk.step_duration_sec:.3f} "
+                    f"protocol={normalized_chunk.steps[0].protocol} "
+                    f"frame={normalized_chunk.steps[0].frame}"
+                )
+                self._raw_chunk_received_logged = True
         except Exception as exc:
             self.get_logger().error(f"Failed to queue raw action chunk: {exc}")
 
@@ -432,6 +442,7 @@ class ControlRuntimeNode(Node):
             float(msg.pose.orientation.z),
             float(msg.pose.orientation.w),
         ]
+        self._latest_pose_matrix = None
         self._publish_task_space_state_if_ready()
 
     def gripper_state_cb(self, msg: JointState) -> None:
@@ -452,6 +463,9 @@ class ControlRuntimeNode(Node):
             return
 
         if command is not None:
+            if not self._raw_chunk_dispatch_logged:
+                self.get_logger().info("Dispatched first raw action chunk step.")
+                self._raw_chunk_dispatch_logged = True
             self._publish_command(
                 command,
                 trajectory_time_from_start_sec=self.runtime.scheduler.step_duration_sec,
@@ -468,23 +482,52 @@ class ControlRuntimeNode(Node):
             )
         except Exception:
             return
+        if not self._task_space_gripper_ready_logged:
+            self.get_logger().info("Received gripper state for task-space state publication.")
+            self._task_space_gripper_ready_logged = True
         self._publish_task_space_state_if_ready()
 
     def _publish_task_space_state_if_ready(self) -> None:
         if self._task_space_state_pub is None:
             return
-        if self._latest_pose_position is None or self._latest_pose_orientation is None:
-            return
         if self._latest_gripper_open_fraction is None:
             return
 
-        state = pose_and_gripper_to_state_vector(
-            self._latest_pose_position,
-            self._latest_pose_orientation,
-            self._latest_gripper_open_fraction,
-        )
+        if self._latest_pose_matrix is not None:
+            state = pose_matrix_to_state_vector(
+                self._latest_pose_matrix,
+                self._latest_gripper_open_fraction,
+            )
+        else:
+            if self._latest_pose_position is None or self._latest_pose_orientation is None:
+                return
+            state = pose_and_gripper_to_state_vector(
+                self._latest_pose_position,
+                self._latest_pose_orientation,
+                self._latest_gripper_open_fraction,
+            )
         out_msg = array_to_task_space_state_message(state)
         self._task_space_state_pub.publish(out_msg)
+        if not self._task_space_publish_logged:
+            self.get_logger().info("Published first TaskSpaceState message.")
+            self._task_space_publish_logged = True
+
+    def _update_pose_from_joint_state(self) -> None:
+        if self._task_space_state_pub is None or not self.current_joints:
+            return
+
+        try:
+            self._latest_pose_matrix = self._kinematics_resolver.current_end_effector_pose(
+                self.current_joints
+            )
+        except Exception as exc:
+            self.get_logger().error(f"Failed to derive task-space pose from joint feedback: {exc}")
+            return
+        if not self._task_space_pose_ready_logged:
+            self.get_logger().info("Derived task-space pose from joint feedback.")
+            self._task_space_pose_ready_logged = True
+
+        self._publish_task_space_state_if_ready()
 
     def _map_gripper_open_fraction_to_goal_position(self, open_fraction: float) -> float:
         clipped = float(max(0.0, min(1.0, open_fraction)))
@@ -781,7 +824,7 @@ def start_controller(
         protocol=resolved["raw_action_protocol"],
         frame=resolved["raw_action_frame"],
     )
-    robot_backend, vendor_stack = _resolve_robot_backend(robot_profile)
+    robot_backend, vendor_stack = backend_metadata_for_robot_profile(robot_profile)
     runtime_profile = RuntimeProfile.edge_control(
         name=robot_profile or "control_runtime",
         deployment_mode="local",

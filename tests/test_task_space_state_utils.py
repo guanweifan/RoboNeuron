@@ -46,7 +46,7 @@ def test_task_space_state_round_trip(monkeypatch) -> None:
 def test_quaternion_xyzw_to_rpy_identity(monkeypatch) -> None:
     _install_fake_task_space_state_module(monkeypatch)
 
-    from roboneuron_core.utils.task_space_state import quaternion_xyzw_to_rpy
+    from roboneuron_edge.state.task_space_alignment import quaternion_xyzw_to_rpy
 
     rpy = quaternion_xyzw_to_rpy([0.0, 0.0, 0.0, 1.0])
 
@@ -56,7 +56,7 @@ def test_quaternion_xyzw_to_rpy_identity(monkeypatch) -> None:
 def test_extract_gripper_open_fraction_from_joint_state_uses_named_fingers(monkeypatch) -> None:
     _install_fake_task_space_state_module(monkeypatch)
 
-    from roboneuron_core.utils.task_space_state import (
+    from roboneuron_edge.state.task_space_alignment import (
         extract_gripper_open_fraction_from_joint_state,
     )
 
@@ -74,7 +74,7 @@ def test_extract_gripper_open_fraction_from_joint_state_uses_named_fingers(monke
 def test_pose_and_gripper_to_state_vector_combines_pose_and_gripper(monkeypatch) -> None:
     _install_fake_task_space_state_module(monkeypatch)
 
-    from roboneuron_core.utils.task_space_state import pose_and_gripper_to_state_vector
+    from roboneuron_edge.state.task_space_alignment import pose_and_gripper_to_state_vector
 
     state = pose_and_gripper_to_state_vector(
         position_xyz=[0.3, -0.1, 0.5],
@@ -84,3 +84,17 @@ def test_pose_and_gripper_to_state_vector_combines_pose_and_gripper(monkeypatch)
 
     np.testing.assert_allclose(state[:6], np.array([0.3, -0.1, 0.5, 0.0, 0.0, 0.0]))
     assert state[6] == 1.0
+
+
+def test_pose_matrix_to_state_vector_uses_forward_kinematics_pose(monkeypatch) -> None:
+    _install_fake_task_space_state_module(monkeypatch)
+
+    from roboneuron_edge.state.task_space_alignment import pose_matrix_to_state_vector
+
+    pose = np.eye(4, dtype=np.float64)
+    pose[:3, 3] = np.array([0.4, -0.2, 0.6], dtype=np.float64)
+
+    state = pose_matrix_to_state_vector(pose, 0.25)
+
+    np.testing.assert_allclose(state[:6], np.array([0.4, -0.2, 0.6, 0.0, 0.0, 0.0]))
+    assert state[6] == 0.25

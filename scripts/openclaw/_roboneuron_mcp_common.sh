@@ -7,10 +7,21 @@ roboneuron_project_root() {
   cd "${script_dir}/../.." && pwd
 }
 
-source_ros_humble() {
+source_ros_runtime() {
   set +u
-  source /opt/ros/humble/setup.bash
+  if [ -f /opt/ros/jazzy/setup.bash ]; then
+    source /opt/ros/jazzy/setup.bash
+  elif [ -f /opt/ros/humble/setup.bash ]; then
+    source /opt/ros/humble/setup.bash
+  else
+    echo "No supported ROS 2 setup.bash found under /opt/ros." >&2
+    return 1
+  fi
   set -u
+}
+
+source_ros_humble() {
+  source_ros_runtime
 }
 
 source_roboneuron_ros_workspace() {
@@ -23,7 +34,8 @@ source_roboneuron_ros_workspace() {
 run_roboneuron_mcp() {
   local entrypoint="${1:?entrypoint required}"
   local project_root="${2:?project root required}"
+  shift 2
 
   export PYTHONUNBUFFERED=1
-  exec uv --directory "${project_root}" run "${entrypoint}"
+  exec uv --directory "${project_root}" run "$@" "${entrypoint}"
 }

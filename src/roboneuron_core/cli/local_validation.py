@@ -11,6 +11,8 @@ LOCAL_VALIDATION_TESTS = (
     "tests/test_action_semantics.py",
     "tests/test_control_runtime.py",
     "tests/test_control_server_host_status.py",
+    "tests/test_core_edge_split_smoke.py",
+    "tests/test_distributed_core_edge_lane_smoke.py",
     "tests/test_dummy_adapters.py",
     "tests/test_kernel_primitives.py",
     "tests/test_local_validation_cli.py",

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from roboneuron_core.utils.control_runtime import (
+from roboneuron_core.kernel import (
     DEFAULT_NORMALIZED_CARTESIAN_VELOCITY_PROTOCOL,
     NormalizedCartesianVelocityConfig,
     RawActionStep,
