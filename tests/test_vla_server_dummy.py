@@ -7,6 +7,7 @@ import sys
 import types
 
 from roboneuron_core.adapters.vla.dummy_vla import DummyVLAWrapper
+from roboneuron_core.kernel import ExecutionSessionStatus, HealthLevel
 
 
 def _install_fake_ros_modules(monkeypatch) -> None:
@@ -137,3 +138,17 @@ def test_start_vla_inference_allows_dummy_without_model_path(monkeypatch) -> Non
     )
 
     assert result == "Success: VLA dummy started (pid=4321)."
+    assert vla_server._VLA_SESSION is not None
+    assert vla_server._VLA_SESSION.status == ExecutionSessionStatus.RUNNING
+    assert vla_server._VLA_SESSION.runtime_profile is not None
+    assert vla_server._VLA_SESSION.runtime_profile.layer == "core"
+    assert vla_server._VLA_SESSION.trace is not None
+    assert vla_server._VLA_SESSION.trace.profile_name == "dummy"
+    assert vla_server._VLA_HEALTH.level == HealthLevel.READY
+
+    stop_result = vla_server.stop_vla_inference()
+
+    assert stop_result == "Success: VLA stopped."
+    assert vla_server._VLA_SESSION.status == ExecutionSessionStatus.STOPPED
+    assert vla_server._VLA_SESSION.history[-1].details["requested_by"] == "mcp"
+    assert vla_server._VLA_HEALTH.level == HealthLevel.IDLE

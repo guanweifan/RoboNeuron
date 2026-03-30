@@ -378,6 +378,8 @@ Canonical service entrypoints are:
 3. Start the control runtime with the matching URDF and topic bindings
 4. Validate the control path with focused tests before hardware deployment
 
+Use `uv run roboneuron-validate-local` as the stable local validation entrypoint before moving on to ROS or hardware-specific checks.
+
 ### Registering a Custom ROS 2 Message
 
 If you create a new ROS message file under your project directory, for example: `ros/roboneuron_interfaces/msg/Test.msg`, you must rebuild and source the ROS 2 workspace so the new message type becomes available to ROS and your MCP tools.

@@ -13,6 +13,8 @@ from typing import Any, Protocol
 import numpy as np
 from ikpy.chain import Chain
 
+from roboneuron_core.kernel.contracts import DEFAULT_NORMALIZED_CARTESIAN_VELOCITY_PROTOCOL
+
 
 def _as_vector(values: Any) -> np.ndarray:
     array = np.asarray(values, dtype=np.float64).reshape(-1)
@@ -70,9 +72,6 @@ class ActuationCommand:
     joint_names: list[str]
     positions: list[float]
     gripper_open_fraction: float | None = None
-
-
-DEFAULT_NORMALIZED_CARTESIAN_VELOCITY_PROTOCOL = "normalized_cartesian_velocity"
 
 
 @dataclass(frozen=True)

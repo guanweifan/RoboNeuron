@@ -25,8 +25,15 @@ from roboneuron_interfaces.msg import EEFDeltaCommand, RawActionChunk, TaskSpace
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
-from roboneuron_core.utils.control_runtime import (
+from roboneuron_core.kernel import (
     DEFAULT_NORMALIZED_CARTESIAN_VELOCITY_PROTOCOL,
+    TASK_SPACE_STATE_SOURCE,
+    ActionContract,
+    ExecutionSession,
+    HealthStatus,
+    RuntimeProfile,
+)
+from roboneuron_core.utils.control_runtime import (
     ActionChunk,
     ControlRuntime,
     NormalizedCartesianVelocityConfig,
@@ -45,6 +52,8 @@ from roboneuron_core.utils.task_space_state import (
 )
 
 _CONTROL_PROCESS = None
+_CONTROL_SESSION: ExecutionSession | None = None
+_CONTROL_HEALTH = HealthStatus.idle("roboneuron-control")
 mcp = FastMCP("roboneuron-control")
 
 DEFAULT_CARTESIAN_CMD_TOPIC = EEF_DELTA_CMD_TOPIC
@@ -68,13 +77,13 @@ DEFAULT_GRIPPER_MAX_EFFORT = 20.0
 
 def _load_gripper_command_action() -> type[Any]:
     try:
-        from control_msgs.action import GripperCommand as gripper_command_action
+        from control_msgs.action import GripperCommand
     except ModuleNotFoundError as exc:
         raise RuntimeError(
             "control_msgs is required when gripper_action_name is configured. "
             "Install the ROS 2 Jazzy control message package on this machine."
         ) from exc
-    return gripper_command_action
+    return GripperCommand
 
 
 def _project_root() -> Path:
@@ -109,6 +118,12 @@ def _load_robot_profile(robot_profile: str, config_path: str | None = None) -> d
     if not isinstance(profile, dict):
         raise ValueError(f"Robot profile '{robot_profile}' not found in {cfg_path}.")
     return profile
+
+
+def _resolve_robot_backend(robot_profile: str | None) -> tuple[str | None, tuple[str, ...]]:
+    if robot_profile == "fr3_real":
+        return "franka", ("franka_ros2", "libfranka")
+    return None, ()
 
 
 def _resolve_controller_settings(
@@ -679,7 +694,7 @@ def start_controller(
     The runtime consumes canonical EEF delta commands and optionally raw action chunks,
     resolves them against the configured URDF, and publishes joint commands for the robot.
     """
-    global _CONTROL_PROCESS
+    global _CONTROL_HEALTH, _CONTROL_PROCESS, _CONTROL_SESSION
     if _CONTROL_PROCESS is not None and _CONTROL_PROCESS.is_alive():
         return "Error: Controller is already running."
 
@@ -714,6 +729,7 @@ def start_controller(
             gripper_joint_names=gripper_joint_names,
         )
     except Exception as exc:
+        _CONTROL_HEALTH = HealthStatus.error("roboneuron-control", summary=str(exc))
         return f"Error: {exc}"
 
     try:
@@ -722,6 +738,11 @@ def start_controller(
             if "<robot" not in txt:
                 return f"Error: file '{resolved['urdf_path']}' doesn't look like a URDF (no <robot> tag)."
     except Exception as exc:
+        _CONTROL_HEALTH = HealthStatus.error(
+            "roboneuron-control",
+            summary=f"cannot read urdf_path '{resolved['urdf_path']}'",
+            details={"error": str(exc)},
+        )
         return f"Error: cannot read urdf_path '{resolved['urdf_path']}': {exc}"
 
     ctx = multiprocessing.get_context("spawn")
@@ -756,7 +777,60 @@ def start_controller(
         ),
         daemon=False,
     )
+    action_contract = ActionContract.raw_action_chunk(
+        protocol=resolved["raw_action_protocol"],
+        frame=resolved["raw_action_frame"],
+    )
+    robot_backend, vendor_stack = _resolve_robot_backend(robot_profile)
+    runtime_profile = RuntimeProfile.edge_control(
+        name=robot_profile or "control_runtime",
+        deployment_mode="local",
+        robot_backend=robot_backend,
+        action_transport=action_contract.transport,
+        action_protocol=action_contract.protocol,
+        state_source=(
+            TASK_SPACE_STATE_SOURCE if resolved["task_space_state_topic"] is not None else None
+        ),
+        vendor_stack=vendor_stack,
+        metadata={
+            "cmd_msg_type": resolved["cmd_msg_type"],
+            "joint_cmd_topic": resolved["joint_cmd_topic"],
+        },
+    )
+    _CONTROL_SESSION = ExecutionSession.create(
+        owner="roboneuron-control",
+        action_contract=action_contract,
+        runtime_profile=runtime_profile,
+        metadata={
+            "cmd_msg_type": resolved["cmd_msg_type"],
+            "joint_cmd_topic": resolved["joint_cmd_topic"],
+            "robot_profile": robot_profile,
+        },
+    )
+    _CONTROL_SESSION.mark_starting(
+        details={
+            "raw_action_topic": resolved["raw_action_topic"],
+            "task_space_state_topic": resolved["task_space_state_topic"],
+        }
+    )
     _CONTROL_PROCESS.start()
+    _CONTROL_SESSION.mark_running(
+        details={
+            "pid": _CONTROL_PROCESS.pid,
+            "robot_profile": robot_profile,
+        }
+    )
+    _CONTROL_HEALTH = HealthStatus.ready(
+        "roboneuron-control",
+        summary="control runtime is running",
+        details={
+            "pid": _CONTROL_PROCESS.pid,
+            "cmd_msg_type": resolved["cmd_msg_type"],
+            "robot_profile": robot_profile,
+            "profile_name": runtime_profile.name,
+            "runtime_layer": runtime_profile.layer,
+        },
+    )
     return (
         f"Success: Controller started with {resolved['urdf_path']} "
         f"(pid={_CONTROL_PROCESS.pid}, type={resolved['cmd_msg_type']})."
@@ -766,7 +840,7 @@ def start_controller(
 @mcp.tool()
 def stop_controller() -> str:
     """Stop the running control runtime process."""
-    global _CONTROL_PROCESS
+    global _CONTROL_HEALTH, _CONTROL_PROCESS, _CONTROL_SESSION
     if _CONTROL_PROCESS is None or not _CONTROL_PROCESS.is_alive():
         return "Info: No controller is running."
 
@@ -777,6 +851,12 @@ def stop_controller() -> str:
             _CONTROL_PROCESS.kill()
         _CONTROL_PROCESS.join(timeout=1.0)
     _CONTROL_PROCESS = None
+    if _CONTROL_SESSION is not None:
+        _CONTROL_SESSION.mark_stopped(
+            reason="stop_controller requested",
+            details={"requested_by": "mcp"},
+        )
+    _CONTROL_HEALTH = HealthStatus.idle("roboneuron-control")
     return "Success: Controller stopped."
 
 

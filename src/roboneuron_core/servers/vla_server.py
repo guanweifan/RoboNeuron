@@ -16,10 +16,19 @@ from PIL import Image
 
 from roboneuron_core.adapters.vla import get_registry
 from roboneuron_core.adapters.vla.dummy_vla import DUMMY_MODEL_PATH
-from roboneuron_core.utils.control_runtime import DEFAULT_NORMALIZED_CARTESIAN_VELOCITY_PROTOCOL
+from roboneuron_core.kernel import (
+    DEFAULT_NORMALIZED_CARTESIAN_VELOCITY_PROTOCOL,
+    TASK_SPACE_STATE_SOURCE,
+    ActionContract,
+    ExecutionSession,
+    HealthStatus,
+    RuntimeProfile,
+)
 from roboneuron_core.utils.raw_action_chunk import RAW_ACTION_CHUNK_TOPIC
 
 _VLA_PROCESS: multiprocessing.Process | None = None
+_VLA_SESSION: ExecutionSession | None = None
+_VLA_HEALTH = HealthStatus.idle("roboneuron-vla")
 EEF_DELTA_CMD_TOPIC = "/eef_delta_cmd"
 mcp = FastMCP("roboneuron-vla")
 
@@ -401,7 +410,7 @@ def start_vla_inference(
         wrist_input_topic (str|None): Optional wrist camera topic for OpenVLA-OFT style observations.
         state_topic (str|None): Optional 7D task-space state topic for OpenVLA-OFT style observations.
     """
-    global _VLA_PROCESS
+    global _VLA_HEALTH, _VLA_PROCESS, _VLA_SESSION
     if _VLA_PROCESS is not None and _VLA_PROCESS.is_alive():
         return "Error: VLA is already running. Stop it first."
 
@@ -409,15 +418,30 @@ def start_vla_inference(
     try:
         registry = get_registry()
         if model_name not in registry:
+            _VLA_HEALTH = HealthStatus.error(
+                "roboneuron-vla",
+                summary=f"model '{model_name}' not found in registry",
+            )
             return f"Error: model '{model_name}' not found in registry."
     except Exception as e:
+        _VLA_HEALTH = HealthStatus.error(
+            "roboneuron-vla",
+            summary="failed to access model registry",
+            details={"error": str(e)},
+        )
         return f"Error: failed to access model registry: {e}"
 
     try:
         model_path, model_kwargs = _resolve_model_spec(model_name, model_path)
     except ValueError as exc:
+        _VLA_HEALTH = HealthStatus.error("roboneuron-vla", summary=str(exc))
         return f"Error: {exc}"
     except Exception as e:
+        _VLA_HEALTH = HealthStatus.error(
+            "roboneuron-vla",
+            summary="failed to load vla models config",
+            details={"error": str(e)},
+        )
         return f"Error: failed to load vla models config: {e}"
 
     try:
@@ -428,16 +452,19 @@ def start_vla_inference(
             action_frame,
         )
     except ValueError as exc:
+        _VLA_HEALTH = HealthStatus.error("roboneuron-vla", summary=str(exc))
         return f"Error: {exc}"
 
     resolved_output_topic = _resolve_output_topic(output_topic, resolved_output_mode)
 
     if step_duration_sec <= 0:
+        _VLA_HEALTH = HealthStatus.error("roboneuron-vla", summary="step_duration_sec must be positive")
         return "Error: step_duration_sec must be positive."
 
     try:
         _load_ros_runtime()
     except RuntimeError as exc:
+        _VLA_HEALTH = HealthStatus.error("roboneuron-vla", summary=str(exc))
         return f"Error: {exc}"
 
     # Use spawn to avoid fork-related rclpy issues
@@ -460,14 +487,70 @@ def start_vla_inference(
         ),
         daemon=False,
     )
+    action_contract = (
+        ActionContract.raw_action_chunk(
+            protocol=resolved_action_protocol,
+            frame=resolved_action_frame,
+        )
+        if resolved_output_mode == "raw_action_chunk"
+        else None
+    )
+    runtime_profile = RuntimeProfile.core_vla(
+        name=model_name,
+        deployment_mode="local",
+        model_runtime=model_name,
+        action_transport=(
+            action_contract.transport if action_contract is not None else "eef_delta_command"
+        ),
+        action_protocol=(action_contract.protocol if action_contract is not None else None),
+        state_source=(TASK_SPACE_STATE_SOURCE if state_topic is not None else None),
+        metadata={
+            "output_mode": resolved_output_mode,
+            "output_topic": resolved_output_topic,
+        },
+    )
+    _VLA_SESSION = ExecutionSession.create(
+        owner="roboneuron-vla",
+        action_contract=action_contract,
+        runtime_profile=runtime_profile,
+        instruction=instruction,
+        metadata={
+            "model_name": model_name,
+            "output_mode": resolved_output_mode,
+            "output_topic": resolved_output_topic,
+        },
+    )
+    _VLA_SESSION.mark_starting(
+        details={
+            "input_topic": input_topic,
+            "output_topic": resolved_output_topic,
+        }
+    )
     _VLA_PROCESS.start()
+    _VLA_SESSION.mark_running(
+        details={
+            "pid": _VLA_PROCESS.pid,
+            "model_name": model_name,
+        }
+    )
+    _VLA_HEALTH = HealthStatus.ready(
+        "roboneuron-vla",
+        summary="VLA runtime is running",
+        details={
+            "pid": _VLA_PROCESS.pid,
+            "model_name": model_name,
+            "output_mode": resolved_output_mode,
+            "profile_name": runtime_profile.name,
+            "runtime_layer": runtime_profile.layer,
+        },
+    )
     return f"Success: VLA {model_name} started (pid={_VLA_PROCESS.pid})."
 
 
 @mcp.tool()
 def stop_vla_inference() -> str:
     """Stops the running VLA inference loop and cleans up the background process."""
-    global _VLA_PROCESS
+    global _VLA_HEALTH, _VLA_PROCESS, _VLA_SESSION
     if _VLA_PROCESS is None or not _VLA_PROCESS.is_alive():
         return "Info: No VLA is running."
 
@@ -479,6 +562,12 @@ def stop_vla_inference() -> str:
         _VLA_PROCESS.join(timeout=1.0)
 
     _VLA_PROCESS = None
+    if _VLA_SESSION is not None:
+        _VLA_SESSION.mark_stopped(
+            reason="stop_vla_inference requested",
+            details={"requested_by": "mcp"},
+        )
+    _VLA_HEALTH = HealthStatus.idle("roboneuron-vla")
     return "Success: VLA stopped."
 
 

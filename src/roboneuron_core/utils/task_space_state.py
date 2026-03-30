@@ -7,6 +7,8 @@ from collections.abc import Sequence
 
 import numpy as np
 
+from roboneuron_core.kernel.contracts import StateSnapshot, TASK_SPACE_STATE_SOURCE
+
 TASK_SPACE_STATE_TOPIC = "/task_space_state"
 
 
@@ -19,11 +21,15 @@ def _task_space_state_cls():
 def array_to_task_space_state_message(state: Sequence[float] | np.ndarray) -> object:
     """Convert a 7D task-space state vector into a ``TaskSpaceState`` ROS message."""
 
-    state_np = np.asarray(state, dtype=np.float64).reshape(-1)
-    if state_np.size != 7:
-        raise ValueError(f"Expected a 7D task-space state vector, got shape {state_np.shape}.")
+    snapshot = StateSnapshot.from_vector(state)
+    return state_snapshot_to_task_space_state_message(snapshot)
+
+
+def state_snapshot_to_task_space_state_message(snapshot: StateSnapshot) -> object:
+    """Convert a ``StateSnapshot`` into a ``TaskSpaceState`` ROS message."""
 
     message = _task_space_state_cls()()
+    state_np = snapshot.as_vector()
     message.x = float(state_np[0])
     message.y = float(state_np[1])
     message.z = float(state_np[2])
@@ -37,7 +43,18 @@ def array_to_task_space_state_message(state: Sequence[float] | np.ndarray) -> ob
 def task_space_state_message_to_array(message: object) -> np.ndarray:
     """Convert a ``TaskSpaceState`` ROS message into a 7D state vector."""
 
-    return np.array(
+    return task_space_state_message_to_state_snapshot(message).as_vector()
+
+
+def task_space_state_message_to_state_snapshot(
+    message: object,
+    *,
+    frame: str = "base",
+    source: str = TASK_SPACE_STATE_SOURCE,
+) -> StateSnapshot:
+    """Convert a ``TaskSpaceState`` ROS message into a ``StateSnapshot``."""
+
+    return StateSnapshot.from_vector(
         [
             message.x,
             message.y,
@@ -47,7 +64,8 @@ def task_space_state_message_to_array(message: object) -> np.ndarray:
             message.yaw,
             message.gripper_open_fraction,
         ],
-        dtype=np.float64,
+        frame=frame,
+        source=source,
     )
 
 
@@ -131,7 +149,10 @@ def pose_and_gripper_to_state_vector(
 ) -> np.ndarray:
     """Build the canonical 7D task-space state vector from pose + gripper state."""
 
-    position = np.asarray(position_xyz, dtype=np.float64).reshape(3)
     roll_pitch_yaw = quaternion_xyzw_to_rpy(orientation_xyzw)
-    clipped_gripper = float(np.clip(gripper_open_fraction, 0.0, 1.0))
-    return np.concatenate([position, roll_pitch_yaw, np.array([clipped_gripper], dtype=np.float64)])
+    snapshot = StateSnapshot.from_pose_and_gripper(
+        position_xyz,
+        roll_pitch_yaw,
+        gripper_open_fraction,
+    )
+    return snapshot.as_vector()

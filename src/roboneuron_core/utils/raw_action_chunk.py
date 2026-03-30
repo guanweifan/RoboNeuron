@@ -6,6 +6,8 @@ from collections.abc import Sequence
 
 import numpy as np
 
+from roboneuron_core.kernel.contracts import ActionContract
+
 from .control_runtime import ActionChunk, RawActionStep
 
 RAW_ACTION_CHUNK_TOPIC = "/raw_action_chunk"
@@ -26,11 +28,8 @@ def array_to_raw_action_chunk_message(
 ) -> object:
     """Convert raw action data into a ``RawActionChunk`` ROS message."""
 
-    action_np = np.asarray(actions, dtype=np.float64)
-    if action_np.ndim == 1:
-        action_np = action_np.reshape(1, -1)
-    if action_np.ndim != 2 or action_np.shape[1] == 0:
-        raise ValueError(f"Expected an action matrix with shape (T, D), got {action_np.shape}.")
+    contract = ActionContract.raw_action_chunk(protocol=protocol, frame=frame)
+    action_np = contract.validate_action_matrix(actions)
     if step_duration_sec <= 0:
         raise ValueError("step_duration_sec must be positive.")
 
@@ -58,10 +57,15 @@ def raw_action_chunk_message_to_action_chunk(message: object) -> ActionChunk:
         )
 
     chunk_length = int(getattr(message, "chunk_length", 0)) or (values.size // action_dim)
-    action_matrix = values.reshape(chunk_length, action_dim)
     protocol = str(getattr(message, "protocol", "") or "eef_delta")
     frame = str(getattr(message, "frame", "") or "tool")
     step_duration_sec = float(getattr(message, "step_duration_sec", 0.1))
+    contract = ActionContract.raw_action_chunk(
+        protocol=protocol,
+        frame=frame,
+        action_dim=action_dim,
+    )
+    action_matrix = contract.validate_action_matrix(values.reshape(chunk_length, action_dim))
 
     return ActionChunk(
         steps=tuple(RawActionStep(step, protocol=protocol, frame=frame) for step in action_matrix),
