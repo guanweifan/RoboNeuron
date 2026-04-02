@@ -38,6 +38,7 @@ roboneuron-mcp-control = "roboneuron_core.cli.mcp_entrypoints:mcp_control"
 roboneuron-mcp-twist = "roboneuron_core.cli.mcp_entrypoints:mcp_twist"
 roboneuron-mcp-eef-delta = "roboneuron_core.cli.mcp_entrypoints:mcp_eef_delta"
 roboneuron-validate-local = "roboneuron_core.cli.local_validation:main"
+roboneuron-franka-adapter = "roboneuron_backends.franka.pipe_bridge_adapter:main"
 
 [dependency-groups]
 dev = [

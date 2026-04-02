@@ -11,13 +11,14 @@ from pathlib import Path
 from typing import Any
 
 import rclpy
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, TwistStamped
 from mcp.server.fastmcp import FastMCP
 from rclpy.action import ActionClient
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from roboneuron_interfaces.msg import EEFDeltaCommand, RawActionChunk, TaskSpaceState
 from sensor_msgs.msg import JointState
+from std_msgs.msg import Float64MultiArray
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from roboneuron_backends.franka import backend_metadata_for_robot_profile
@@ -62,6 +63,9 @@ DEFAULT_RAW_ACTION_FRAME = "tool"
 DEFAULT_MAX_LINEAR_DELTA = 0.075
 DEFAULT_MAX_ROTATION_DELTA = 0.15
 DEFAULT_TRAJECTORY_TIME_FROM_START_SEC = 0.5
+DEFAULT_RAW_ACTION_DISPATCH_PERIOD_SEC = 0.02
+DEFAULT_TWIST_STREAM_PERIOD_SEC = 0.01
+DEFAULT_TWIST_STOP_RAMP_SEC = 0.5
 DEFAULT_STATE_FEEDBACK_TIMEOUT_SEC = 0.5
 DEFAULT_TASK_SPACE_FRAME_ID = "base"
 DEFAULT_GRIPPER_COMMAND_MODE = "width"
@@ -70,6 +74,52 @@ DEFAULT_GRIPPER_STATE_CLOSED_POSITION = 0.0
 DEFAULT_GRIPPER_ACTION_OPEN_POSITION = 0.08
 DEFAULT_GRIPPER_ACTION_CLOSED_POSITION = 0.0
 DEFAULT_GRIPPER_MAX_EFFORT = 20.0
+DEFAULT_GRIPPER_BINARY_THRESHOLD = 0.1
+
+
+class VelocityBlendState:
+    """Blend sparse target updates into a continuous local velocity stream."""
+
+    def __init__(self) -> None:
+        self._start = [0.0] * 6
+        self._target = [0.0] * 6
+        self._blend_started_at = 0.0
+        self._blend_duration_sec = 1e-3
+
+    def set_target(
+        self,
+        target: list[float],
+        *,
+        now: float,
+        duration_sec: float,
+    ) -> None:
+        normalized = [float(value) for value in target[:6]]
+        if self._same_target(normalized):
+            return
+
+        current = self.value(now=now)
+        self._start = current
+        self._target = normalized
+        self._blend_started_at = now
+        self._blend_duration_sec = max(float(duration_sec), 1e-3)
+
+    def value(self, *, now: float) -> list[float]:
+        alpha = (now - self._blend_started_at) / self._blend_duration_sec
+        alpha = min(1.0, max(0.0, alpha))
+        eased = alpha * alpha * (3.0 - 2.0 * alpha)
+        return [
+            start + (target - start) * eased
+            for start, target in zip(self._start, self._target, strict=False)
+        ]
+
+    def target_is_zero(self, *, tolerance: float = 1e-6) -> bool:
+        return all(abs(value) <= tolerance for value in self._target)
+
+    def _same_target(self, other: list[float], *, tolerance: float = 1e-9) -> bool:
+        return all(
+            abs(current - candidate) <= tolerance
+            for current, candidate in zip(self._target, other, strict=False)
+        )
 
 
 def _load_gripper_command_action() -> type[Any]:
@@ -131,6 +181,7 @@ def _resolve_controller_settings(
     max_rotation_delta: float | None,
     invert_gripper_action: bool | None,
     trajectory_time_from_start_sec: float | None,
+    raw_action_dispatch_period_sec: float | None,
     state_feedback_timeout_sec: float | None,
     task_space_state_topic: str | None,
     pose_feedback_topic: str | None,
@@ -175,6 +226,11 @@ def _resolve_controller_settings(
             profile.get("trajectory_time_from_start_sec", DEFAULT_TRAJECTORY_TIME_FROM_START_SEC)
             if trajectory_time_from_start_sec is None
             else trajectory_time_from_start_sec
+        ),
+        "raw_action_dispatch_period_sec": float(
+            profile.get("raw_action_dispatch_period_sec", DEFAULT_RAW_ACTION_DISPATCH_PERIOD_SEC)
+            if raw_action_dispatch_period_sec is None
+            else raw_action_dispatch_period_sec
         ),
         "state_feedback_timeout_sec": float(
             profile.get("state_feedback_timeout_sec", DEFAULT_STATE_FEEDBACK_TIMEOUT_SEC)
@@ -221,10 +277,14 @@ def _resolve_controller_settings(
 
     if resolved["urdf_path"] is None:
         raise ValueError("urdf_path is required unless robot_profile provides it.")
-    if resolved["cmd_msg_type"] not in {"JointTrajectory", "JointState"}:
-        raise ValueError("cmd_msg_type must be 'JointTrajectory' or 'JointState'.")
+    if resolved["cmd_msg_type"] not in {"JointTrajectory", "JointState", "Float64MultiArray", "TwistStamped"}:
+        raise ValueError(
+            "cmd_msg_type must be 'JointTrajectory', 'JointState', 'Float64MultiArray', or 'TwistStamped'."
+        )
     if resolved["trajectory_time_from_start_sec"] <= 0:
         raise ValueError("trajectory_time_from_start_sec must be positive.")
+    if resolved["raw_action_dispatch_period_sec"] <= 0:
+        raise ValueError("raw_action_dispatch_period_sec must be positive.")
     if resolved["state_feedback_timeout_sec"] <= 0:
         raise ValueError("state_feedback_timeout_sec must be positive.")
     if resolved["gripper_command_mode"] not in {"width", "joint_position"}:
@@ -251,6 +311,7 @@ class ControlRuntimeNode(Node):
         max_rotation_delta: float = 0.15,
         invert_gripper_action: bool = False,
         trajectory_time_from_start_sec: float = DEFAULT_TRAJECTORY_TIME_FROM_START_SEC,
+        raw_action_dispatch_period_sec: float = DEFAULT_RAW_ACTION_DISPATCH_PERIOD_SEC,
         state_feedback_timeout_sec: float = DEFAULT_STATE_FEEDBACK_TIMEOUT_SEC,
         task_space_state_topic: str | None = None,
         pose_feedback_topic: str | None = None,
@@ -269,9 +330,13 @@ class ControlRuntimeNode(Node):
 
         self.cmd_msg_type = cmd_msg_type
         self.current_joints: dict[str, float] = {}
+        self._command_joint_positions: dict[str, float] = {}
+        self._last_command_sent_at: float | None = None
         self._default_raw_action_protocol = raw_action_protocol
         self._default_raw_action_frame = raw_action_frame
+        self._invert_model_gripper_fraction = bool(invert_gripper_action)
         self._default_trajectory_time_from_start_sec = float(trajectory_time_from_start_sec)
+        self._raw_action_dispatch_period_sec = float(raw_action_dispatch_period_sec)
         self._state_feedback_timeout_sec = float(state_feedback_timeout_sec)
         self._task_space_frame_id = task_space_frame_id
         self._last_joint_state_at: float | None = None
@@ -291,6 +356,8 @@ class ControlRuntimeNode(Node):
         self._task_space_publish_logged = False
         self._raw_chunk_received_logged = False
         self._raw_chunk_dispatch_logged = False
+        self._velocity_blend = VelocityBlendState()
+        self._velocity_hold_until: float | None = None
         self._pose_frame_mismatch_warned = False
         self._gripper_joint_names = tuple(gripper_joint_names or [])
         self._gripper_joint_name_set = set(self._gripper_joint_names)
@@ -308,6 +375,7 @@ class ControlRuntimeNode(Node):
         self._gripper_max_effort = float(gripper_max_effort)
         self._last_gripper_goal_position: float | None = None
         self._gripper_server_warned = False
+        self._gripper_binary_threshold = DEFAULT_GRIPPER_BINARY_THRESHOLD
         self._gripper_state_from_joint_feedback = (
             gripper_state_topic is not None and gripper_state_topic == state_feedback_topic
         )
@@ -320,13 +388,21 @@ class ControlRuntimeNode(Node):
         )
         resolver = URDFKinematicsResolver(urdf_path)
         self._kinematics_resolver = resolver
-        self.runtime = ControlRuntime(resolver, normalized_velocity_config=normalized_velocity_config)
+        self.runtime = ControlRuntime(
+            resolver,
+            normalized_velocity_config=normalized_velocity_config,
+            raw_action_dispatch_period_sec=self._raw_action_dispatch_period_sec,
+        )
 
         self.get_logger().info(f"Subscribing to Cartesian commands on: {cartesian_cmd_topic}")
         self.get_logger().info(f"Subscribing to Joint States on: {state_feedback_topic}")
         self.get_logger().info(f"Publishing {self.cmd_msg_type} to: {joint_cmd_topic}")
         if raw_action_topic:
             self.get_logger().info(f"Subscribing to raw action chunks on: {raw_action_topic}")
+            self.get_logger().info(
+                "Using local raw-action dispatch period: "
+                f"{self._raw_action_dispatch_period_sec:.3f}s"
+            )
         if task_space_state_topic:
             self.get_logger().info(f"Publishing task-space state to: {task_space_state_topic}")
         if pose_feedback_topic:
@@ -351,10 +427,23 @@ class ControlRuntimeNode(Node):
 
         if self.cmd_msg_type == "JointState":
             self.pub_cmd = self.create_publisher(JointState, joint_cmd_topic, 10)
+        elif self.cmd_msg_type == "Float64MultiArray":
+            self.pub_cmd = self.create_publisher(Float64MultiArray, joint_cmd_topic, 10)
+        elif self.cmd_msg_type == "TwistStamped":
+            self.pub_cmd = self.create_publisher(TwistStamped, joint_cmd_topic, 10)
         else:
             self.pub_cmd = self.create_publisher(JointTrajectory, joint_cmd_topic, 10)
 
-        self._dispatch_timer = self.create_timer(0.01, self._dispatch_pending_chunk)
+        if self.cmd_msg_type == "TwistStamped":
+            self._dispatch_timer = self.create_timer(
+                DEFAULT_TWIST_STREAM_PERIOD_SEC,
+                self._stream_velocity_command,
+            )
+        else:
+            self._dispatch_timer = self.create_timer(
+                self._raw_action_dispatch_period_sec,
+                self._dispatch_pending_chunk,
+            )
 
     def state_cb(self, msg: JointState) -> None:
         """Update the latest joint-state cache."""
@@ -374,10 +463,14 @@ class ControlRuntimeNode(Node):
 
         try:
             intent = motion_intent_from_eef_delta(eef_delta_command_to_array(msg))
-            command = self.runtime.resolve_intent(
-                intent,
-                self.current_joints,
-            )
+            if self.cmd_msg_type == "TwistStamped":
+                self._update_velocity_target(
+                    intent,
+                    step_duration_sec=self._default_trajectory_time_from_start_sec,
+                )
+                return
+            seed_joint_positions = self._resolve_joint_seed_positions()
+            command = self.runtime.resolve_intent(intent, seed_joint_positions)
         except Exception as exc:
             self.get_logger().error(f"Failed to resolve EEF delta command: {exc}")
             return
@@ -402,6 +495,7 @@ class ControlRuntimeNode(Node):
                 intents,
                 step_duration_sec=action_chunk.step_duration_sec,
             )
+            self._velocity_hold_until = None
             if not self._raw_chunk_received_logged:
                 self.get_logger().info(
                     "Queued first raw action chunk: "
@@ -451,11 +545,13 @@ class ControlRuntimeNode(Node):
         if not self._has_fresh_joint_state():
             if self.runtime.scheduler.pending_count > 0:
                 self.runtime.clear_action_chunk()
+                self._command_joint_positions.clear()
+                self._last_command_sent_at = None
                 self.get_logger().warning("Dropped pending raw action chunk because robot state feedback went stale.")
             return
 
         try:
-            command = self.runtime.dispatch_ready(self.current_joints)
+            command = self.runtime.dispatch_ready(self._resolve_joint_seed_positions())
         except Exception as exc:
             self.get_logger().error(f"Failed to dispatch raw action chunk step: {exc}")
             return
@@ -466,8 +562,53 @@ class ControlRuntimeNode(Node):
                 self._raw_chunk_dispatch_logged = True
             self._publish_command(
                 command,
-                trajectory_time_from_start_sec=self.runtime.scheduler.step_duration_sec,
+                trajectory_time_from_start_sec=max(
+                    self._default_trajectory_time_from_start_sec,
+                    self.runtime.scheduler.step_duration_sec,
+                ),
             )
+
+    def _stream_velocity_command(self) -> None:
+        now = time.monotonic()
+        zero_velocity = [0.0] * 6
+
+        if not self._has_fresh_joint_state():
+            if self.runtime.scheduler.pending_count > 0:
+                self.runtime.clear_action_chunk()
+                self.get_logger().warning("Dropped pending raw action chunk because robot state feedback went stale.")
+            self._velocity_hold_until = None
+            self._velocity_blend.set_target(
+                zero_velocity,
+                now=now,
+                duration_sec=DEFAULT_TWIST_STOP_RAMP_SEC,
+            )
+            self._publish_velocity(self._velocity_blend.value(now=now))
+            return
+
+        try:
+            intent = self.runtime.dispatch_ready_intent(now=now)
+        except Exception as exc:
+            self.get_logger().error(f"Failed to dispatch raw action chunk step: {exc}")
+            return
+
+        if intent is not None:
+            if not self._raw_chunk_dispatch_logged:
+                self.get_logger().info("Dispatched first raw action chunk step.")
+                self._raw_chunk_dispatch_logged = True
+            self._update_velocity_target(
+                intent,
+                step_duration_sec=self.runtime.scheduler.step_duration_sec,
+                now=now,
+            )
+        elif self.runtime.scheduler.pending_count == 0:
+            if self._velocity_hold_until is None or now >= self._velocity_hold_until:
+                self._velocity_blend.set_target(
+                    zero_velocity,
+                    now=now,
+                    duration_sec=DEFAULT_TWIST_STOP_RAMP_SEC,
+                )
+
+        self._publish_velocity(self._velocity_blend.value(now=now))
 
     def _update_gripper_open_fraction(self, msg: JointState) -> None:
         try:
@@ -491,10 +632,14 @@ class ControlRuntimeNode(Node):
         if self._latest_gripper_open_fraction is None:
             return
 
+        state_gripper_fraction = self._latest_gripper_open_fraction
+        if self._invert_model_gripper_fraction:
+            state_gripper_fraction = 1.0 - state_gripper_fraction
+
         if self._latest_pose_matrix is not None:
             state = pose_matrix_to_state_vector(
                 self._latest_pose_matrix,
-                self._latest_gripper_open_fraction,
+                state_gripper_fraction,
             )
         else:
             if self._latest_pose_position is None or self._latest_pose_orientation is None:
@@ -502,7 +647,7 @@ class ControlRuntimeNode(Node):
             state = pose_and_gripper_to_state_vector(
                 self._latest_pose_position,
                 self._latest_pose_orientation,
-                self._latest_gripper_open_fraction,
+                state_gripper_fraction,
             )
         out_msg = array_to_task_space_state_message(state)
         self._task_space_state_pub.publish(out_msg)
@@ -529,19 +674,55 @@ class ControlRuntimeNode(Node):
 
     def _map_gripper_open_fraction_to_goal_position(self, open_fraction: float) -> float:
         clipped = float(max(0.0, min(1.0, open_fraction)))
-        if self._gripper_command_mode == "joint_position":
-            return self._gripper_action_closed_position + (
-                self._gripper_action_open_position - self._gripper_action_closed_position
-            ) * clipped
-        return self._gripper_action_closed_position + (
+        target_position = self._gripper_action_closed_position + (
             self._gripper_action_open_position - self._gripper_action_closed_position
         ) * clipped
+        low = min(self._gripper_action_closed_position, self._gripper_action_open_position)
+        high = max(self._gripper_action_closed_position, self._gripper_action_open_position)
+        if self._gripper_command_mode == "joint_position" and high > low:
+            # Franka's GripperCommand action doubles per-finger positions into width and is
+            # numerically sensitive at the fully open limit, so keep a tiny safety margin.
+            safety_margin = max((high - low) * 1e-4, 1e-6)
+            if self._gripper_action_open_position >= self._gripper_action_closed_position:
+                high -= safety_margin
+            else:
+                low += safety_margin
+        return float(min(high, max(low, target_position)))
+
+    def _select_gripper_goal_open_fraction(self, open_fraction: float) -> float | None:
+        clipped = float(max(0.0, min(1.0, open_fraction)))
+        if self._gripper_command_mode != "joint_position":
+            return clipped
+
+        if clipped >= 1.0 - self._gripper_binary_threshold:
+            desired_open = True
+        elif clipped <= self._gripper_binary_threshold:
+            desired_open = False
+        else:
+            return None
+
+        current_open: bool | None = None
+        if self._latest_gripper_open_fraction is not None:
+            current_open = self._latest_gripper_open_fraction >= 0.5
+        elif self._last_gripper_goal_position is not None:
+            midpoint = (
+                self._gripper_action_closed_position + self._gripper_action_open_position
+            ) / 2.0
+            current_open = self._last_gripper_goal_position >= midpoint
+
+        if current_open is not None and current_open == desired_open:
+            return None
+        return 1.0 if desired_open else 0.0
 
     def _send_gripper_goal_if_needed(self, open_fraction: float | None) -> None:
         if self._gripper_action_client is None or open_fraction is None:
             return
 
-        target_position = self._map_gripper_open_fraction_to_goal_position(open_fraction)
+        resolved_open_fraction = self._select_gripper_goal_open_fraction(open_fraction)
+        if resolved_open_fraction is None:
+            return
+
+        target_position = self._map_gripper_open_fraction_to_goal_position(resolved_open_fraction)
         if (
             self._last_gripper_goal_position is not None
             and abs(target_position - self._last_gripper_goal_position) < 1e-4
@@ -586,11 +767,21 @@ class ControlRuntimeNode(Node):
         if not arm_joint_names:
             return
 
+        for name, position in zip(arm_joint_names, arm_positions, strict=False):
+            self._command_joint_positions[name] = float(position)
+        self._last_command_sent_at = time.monotonic()
+
         if self.cmd_msg_type == "JointState":
             out_msg = JointState()
             out_msg.header.stamp = self.get_clock().now().to_msg()
             out_msg.name = arm_joint_names
             out_msg.position = arm_positions
+            self.pub_cmd.publish(out_msg)
+            return
+
+        if self.cmd_msg_type == "Float64MultiArray":
+            out_msg = Float64MultiArray()
+            out_msg.data = arm_positions
             self.pub_cmd.publish(out_msg)
             return
 
@@ -606,6 +797,70 @@ class ControlRuntimeNode(Node):
 
         out_msg.points.append(point)
         self.pub_cmd.publish(out_msg)
+
+    def _update_velocity_target(
+        self,
+        intent,
+        *,
+        step_duration_sec: float,
+        now: float | None = None,
+    ) -> None:
+        now_sec = time.monotonic() if now is None else now
+        self._send_gripper_goal_if_needed(intent.gripper_open_fraction)
+        velocity = self._intent_to_velocity(intent, step_duration_sec=step_duration_sec)
+        self._velocity_blend.set_target(
+            velocity,
+            now=now_sec,
+            duration_sec=step_duration_sec,
+        )
+        self._velocity_hold_until = now_sec + max(float(step_duration_sec), DEFAULT_TWIST_STREAM_PERIOD_SEC)
+
+    def _publish_velocity(self, velocity: list[float]) -> None:
+        out_msg = TwistStamped()
+        out_msg.header.stamp = self.get_clock().now().to_msg()
+        out_msg.header.frame_id = self._task_space_frame_id
+        out_msg.twist.linear.x = velocity[0]
+        out_msg.twist.linear.y = velocity[1]
+        out_msg.twist.linear.z = velocity[2]
+        out_msg.twist.angular.x = velocity[3]
+        out_msg.twist.angular.y = velocity[4]
+        out_msg.twist.angular.z = velocity[5]
+        self.pub_cmd.publish(out_msg)
+
+    def _intent_to_velocity(self, intent, *, step_duration_sec: float) -> list[float]:
+        arm_delta = list(float(value) for value in intent.arm[:6])
+        effective_step_duration_sec = max(float(step_duration_sec), 1e-6)
+        linear = [value / effective_step_duration_sec for value in arm_delta[:3]]
+        angular = [value / effective_step_duration_sec for value in arm_delta[3:6]]
+
+        if intent.frame not in {"base", "world"}:
+            pose_matrix = self._latest_pose_matrix
+            if pose_matrix is None and self.current_joints:
+                pose_matrix = self._kinematics_resolver.current_end_effector_pose(self.current_joints)
+            if pose_matrix is not None:
+                rotation = pose_matrix[:3, :3]
+                linear = list(rotation @ linear)
+                angular = list(rotation @ angular)
+
+        return [*linear, *angular]
+
+    def _resolve_joint_seed_positions(self) -> dict[str, float]:
+        seed = dict(self.current_joints)
+
+        if not self._command_joint_positions or self._last_command_sent_at is None:
+            return seed
+
+        seed_timeout_sec = max(
+            self._default_trajectory_time_from_start_sec,
+            self._raw_action_dispatch_period_sec,
+        ) * 2.0
+        if (time.monotonic() - self._last_command_sent_at) > seed_timeout_sec:
+            self._command_joint_positions.clear()
+            self._last_command_sent_at = None
+            return seed
+
+        seed.update(self._command_joint_positions)
+        return seed
 
     def _has_fresh_joint_state(self) -> bool:
         if not self.current_joints or self._last_joint_state_at is None:
@@ -644,6 +899,7 @@ def _ros_worker(
     max_rotation_delta: float,
     invert_gripper_action: bool,
     trajectory_time_from_start_sec: float,
+    raw_action_dispatch_period_sec: float,
     state_feedback_timeout_sec: float,
     task_space_state_topic: str | None,
     pose_feedback_topic: str | None,
@@ -674,6 +930,7 @@ def _ros_worker(
         max_rotation_delta=max_rotation_delta,
         invert_gripper_action=invert_gripper_action,
         trajectory_time_from_start_sec=trajectory_time_from_start_sec,
+        raw_action_dispatch_period_sec=raw_action_dispatch_period_sec,
         state_feedback_timeout_sec=state_feedback_timeout_sec,
         task_space_state_topic=task_space_state_topic,
         pose_feedback_topic=pose_feedback_topic,
@@ -713,6 +970,7 @@ def start_controller(
     max_rotation_delta: float | None = None,
     invert_gripper_action: bool | None = None,
     trajectory_time_from_start_sec: float | None = None,
+    raw_action_dispatch_period_sec: float | None = None,
     state_feedback_timeout_sec: float | None = None,
     task_space_state_topic: str | None = None,
     pose_feedback_topic: str | None = None,
@@ -755,6 +1013,7 @@ def start_controller(
             max_rotation_delta=max_rotation_delta,
             invert_gripper_action=invert_gripper_action,
             trajectory_time_from_start_sec=trajectory_time_from_start_sec,
+            raw_action_dispatch_period_sec=raw_action_dispatch_period_sec,
             state_feedback_timeout_sec=state_feedback_timeout_sec,
             task_space_state_topic=task_space_state_topic,
             pose_feedback_topic=pose_feedback_topic,
@@ -802,6 +1061,7 @@ def start_controller(
             resolved["max_rotation_delta"],
             resolved["invert_gripper_action"],
             resolved["trajectory_time_from_start_sec"],
+            resolved["raw_action_dispatch_period_sec"],
             resolved["state_feedback_timeout_sec"],
             resolved["task_space_state_topic"],
             resolved["pose_feedback_topic"],
@@ -836,6 +1096,7 @@ def start_controller(
         metadata={
             "cmd_msg_type": resolved["cmd_msg_type"],
             "joint_cmd_topic": resolved["joint_cmd_topic"],
+            "raw_action_dispatch_period_sec": resolved["raw_action_dispatch_period_sec"],
         },
     )
     _CONTROL_SESSION = ExecutionSession.create(
@@ -845,6 +1106,7 @@ def start_controller(
         metadata={
             "cmd_msg_type": resolved["cmd_msg_type"],
             "joint_cmd_topic": resolved["joint_cmd_topic"],
+            "raw_action_dispatch_period_sec": resolved["raw_action_dispatch_period_sec"],
             "robot_profile": robot_profile,
         },
     )
@@ -852,6 +1114,7 @@ def start_controller(
         details={
             "raw_action_topic": resolved["raw_action_topic"],
             "task_space_state_topic": resolved["task_space_state_topic"],
+            "raw_action_dispatch_period_sec": resolved["raw_action_dispatch_period_sec"],
         }
     )
     _CONTROL_PROCESS.start()
@@ -914,7 +1177,13 @@ if __name__ == "__main__":
     parser.add_argument("--cartesian-cmd-topic", type=str, default=None, help="Topic for EEF delta commands")
     parser.add_argument("--state-feedback-topic", type=str, default=None, help="Topic for robot joint state feedback")
     parser.add_argument("--joint-cmd-topic", type=str, default=None, help="Topic for publishing joint commands")
-    parser.add_argument("--cmd-msg-type", type=str, default=None, choices=["JointTrajectory", "JointState"], help="Output message type")
+    parser.add_argument(
+        "--cmd-msg-type",
+        type=str,
+        default=None,
+        choices=["JointTrajectory", "JointState", "Float64MultiArray", "TwistStamped"],
+        help="Output message type",
+    )
     parser.add_argument("--raw-action-topic", type=str, default=None, help="Topic for chunked raw actions")
     parser.add_argument("--raw-action-protocol", type=str, default=None, help="Protocol name for raw action chunks")
     parser.add_argument("--raw-action-frame", type=str, default=None, help="Frame for raw action chunks")
@@ -922,6 +1191,7 @@ if __name__ == "__main__":
     parser.add_argument("--max-rotation-delta", type=float, default=None, help="Maximum rotational delta for normalized velocity actions")
     parser.add_argument("--invert-gripper-action", action="store_true", help="Invert raw gripper actions before resolving them")
     parser.add_argument("--trajectory-time-from-start-sec", type=float, default=None, help="JointTrajectory point time_from_start in seconds")
+    parser.add_argument("--raw-action-dispatch-period-sec", type=float, default=None, help="Local edge dispatch period used to resample raw action chunks")
     parser.add_argument("--state-feedback-timeout-sec", type=float, default=None, help="Maximum allowed age for robot joint state feedback")
     parser.add_argument("--task-space-state-topic", type=str, default=None, help="Optional TaskSpaceState publish topic")
     parser.add_argument("--pose-feedback-topic", type=str, default=None, help="PoseStamped topic used to build TaskSpaceState")
@@ -952,6 +1222,7 @@ if __name__ == "__main__":
             max_rotation_delta=args.max_rotation_delta,
             invert_gripper_action=args.invert_gripper_action if args.invert_gripper_action else None,
             trajectory_time_from_start_sec=args.trajectory_time_from_start_sec,
+            raw_action_dispatch_period_sec=args.raw_action_dispatch_period_sec,
             state_feedback_timeout_sec=args.state_feedback_timeout_sec,
             task_space_state_topic=args.task_space_state_topic,
             pose_feedback_topic=args.pose_feedback_topic,
