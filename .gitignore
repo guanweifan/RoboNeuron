@@ -34,7 +34,6 @@ venv/
 env/
 ENV/
 __pypackages__/
-.python-version
 
 # Jupyter
 .ipynb_checkpoints/
@@ -42,6 +41,7 @@ __pypackages__/
 # IDE / editor
 .vscode/
 .idea/
+.codex/
 *.code-workspace
 *.swp
 *.swo
@@ -66,7 +66,7 @@ ros/log/
 ros/**/build/
 ros/**/install/
 ros/**/log/
-ros/src/control_msgs/
+ros/src/
 
 # ROS bag / database artifacts
 *.bag
@@ -85,7 +85,6 @@ models/
 .cache/
 
 # Local config / machine-specific files
-.codex
 .env
 .env.*
 !.env.example

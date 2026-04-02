@@ -96,7 +96,7 @@ RoboNeuron should be understood through four layers:
 - **ROS boundary**: `ros/roboneuron_interfaces` defines first-party message contracts used to connect RoboNeuron to ROS 2 systems.
 - **Integrations and configs**: `configs/` holds stable configuration, and `openclaw/` contains the first-class OpenClaw integration surface.
 
-For a more opinionated analysis of the current structure and future direction, see [docs/roboneuron-structure-and-roadmap.md](./docs/roboneuron-structure-and-roadmap.md).
+For product-stage framing and current engineering acceptance, see [docs/product-roadmap.md](./docs/product-roadmap.md) and [docs/development-roadmap.md](./docs/development-roadmap.md).
 
 ## Installation & Configuration
 
