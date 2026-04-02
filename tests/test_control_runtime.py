@@ -4,6 +4,7 @@ from roboneuron_core.kernel import (
     DEFAULT_NORMALIZED_CARTESIAN_VELOCITY_PROTOCOL,
     ActionChunk,
     ActuationCommand,
+    MotionIntent,
     RawActionStep,
 )
 from roboneuron_edge.runtime.control_runtime import ControlRuntime
@@ -119,3 +120,52 @@ def test_control_runtime_can_clear_pending_chunk() -> None:
     assert runtime.scheduler.pending_count == 0
     assert runtime.dispatch_ready({"joint1": 0.0}, now=0.0) is None
     assert resolver.calls == []
+
+
+def test_control_runtime_resolves_motion_intent_directly() -> None:
+    resolver = FakeResolver()
+    runtime = ControlRuntime(resolver)
+
+    intent = MotionIntent(
+        mode="cartesian_delta",
+        arm=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        gripper_open_fraction=0.6,
+        frame="tool",
+    )
+
+    command = runtime.resolve_intent(intent, {"joint1": 0.0})
+
+    assert command.positions == [0.6]
+    assert resolver.calls[0][0] == intent
+
+
+def test_control_runtime_can_queue_motion_intents_directly() -> None:
+    resolver = FakeResolver()
+    runtime = ControlRuntime(resolver)
+
+    runtime.queue_intents(
+        (
+            MotionIntent(
+                mode="cartesian_delta",
+                arm=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                gripper_open_fraction=0.2,
+                frame="tool",
+            ),
+            MotionIntent(
+                mode="cartesian_delta",
+                arm=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                gripper_open_fraction=0.8,
+                frame="tool",
+            ),
+        ),
+        step_duration_sec=0.05,
+        now=0.0,
+    )
+
+    first = runtime.dispatch_ready({"joint1": 0.0}, now=0.0)
+    second = runtime.dispatch_ready({"joint1": 0.0}, now=0.05)
+
+    assert first is not None
+    assert first.gripper_open_fraction == 0.2
+    assert second is not None
+    assert second.gripper_open_fraction == 0.8

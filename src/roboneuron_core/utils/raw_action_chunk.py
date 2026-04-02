@@ -41,8 +41,18 @@ def array_to_raw_action_chunk_message(
     return message
 
 
-def raw_action_chunk_message_to_action_chunk(message: object) -> ActionChunk:
-    """Convert a ``RawActionChunk`` ROS message into a semantic action chunk."""
+def raw_action_chunk_message_to_action_chunk(
+    message: object,
+    *,
+    default_protocol: str = "eef_delta",
+    default_frame: str = "tool",
+) -> ActionChunk:
+    """Convert a ``RawActionChunk`` ROS message into an action chunk.
+
+    The message transport is allowed to omit protocol or frame metadata.
+    In that case, the caller-provided defaults are used before semantic
+    interpretation continues elsewhere in the runtime.
+    """
 
     action_dim = int(message.action_dim)
     if action_dim <= 0:
@@ -55,8 +65,8 @@ def raw_action_chunk_message_to_action_chunk(message: object) -> ActionChunk:
         )
 
     chunk_length = int(getattr(message, "chunk_length", 0)) or (values.size // action_dim)
-    protocol = str(getattr(message, "protocol", "") or "eef_delta")
-    frame = str(getattr(message, "frame", "") or "tool")
+    protocol = str(getattr(message, "protocol", "") or default_protocol)
+    frame = str(getattr(message, "frame", "") or default_frame)
     step_duration_sec = float(getattr(message, "step_duration_sec", 0.1))
     contract = ActionContract.raw_action_chunk(
         protocol=protocol,

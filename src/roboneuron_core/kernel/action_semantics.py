@@ -1,4 +1,9 @@
-"""Shared action semantics used across core and edge runtime modules."""
+"""Shared action semantics used across core and edge runtime modules.
+
+`MotionIntent` is the semantic core for the manipulation runtime.
+Transport-layer artifacts such as `EEFDeltaCommand` and `RawActionChunk`
+must be decoded into `MotionIntent` before edge-side execution resolves them.
+"""
 
 from __future__ import annotations
 
@@ -148,3 +153,19 @@ def motion_intent_from_raw_step(
         )
 
     raise ValueError(f"Unsupported raw action protocol: {step.protocol}")
+
+
+def motion_intents_from_action_chunk(
+    chunk: ActionChunk,
+    *,
+    normalized_velocity_config: NormalizedCartesianVelocityConfig | None = None,
+) -> tuple[MotionIntent, ...]:
+    """Interpret every step in an action chunk as canonical motion intents."""
+
+    return tuple(
+        motion_intent_from_raw_step(
+            step,
+            normalized_velocity_config=normalized_velocity_config,
+        )
+        for step in chunk.steps
+    )

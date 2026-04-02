@@ -24,13 +24,13 @@ from roboneuron_backends.franka import backend_metadata_for_robot_profile
 from roboneuron_core.kernel import (
     DEFAULT_NORMALIZED_CARTESIAN_VELOCITY_PROTOCOL,
     TASK_SPACE_STATE_SOURCE,
-    ActionChunk,
     ActionContract,
     ExecutionSession,
     HealthStatus,
     NormalizedCartesianVelocityConfig,
-    RawActionStep,
     RuntimeProfile,
+    motion_intent_from_eef_delta,
+    motion_intents_from_action_chunk,
 )
 from roboneuron_core.utils.eef_delta import EEF_DELTA_CMD_TOPIC, eef_delta_command_to_array
 from roboneuron_core.utils.raw_action_chunk import (
@@ -44,8 +44,8 @@ from roboneuron_edge.runtime.control_runtime import (
 )
 from roboneuron_edge.state.task_space_alignment import (
     extract_gripper_open_fraction_from_joint_state,
-    pose_matrix_to_state_vector,
     pose_and_gripper_to_state_vector,
+    pose_matrix_to_state_vector,
 )
 
 _CONTROL_PROCESS = None
@@ -229,9 +229,8 @@ def _resolve_controller_settings(
         raise ValueError("state_feedback_timeout_sec must be positive.")
     if resolved["gripper_command_mode"] not in {"width", "joint_position"}:
         raise ValueError("gripper_command_mode must be 'width' or 'joint_position'.")
-    if resolved["task_space_state_topic"] is not None:
-        if not resolved["gripper_state_topic"]:
-            raise ValueError("gripper_state_topic is required when task_space_state_topic is enabled.")
+    if resolved["task_space_state_topic"] is not None and not resolved["gripper_state_topic"]:
+        raise ValueError("gripper_state_topic is required when task_space_state_topic is enabled.")
     return resolved
 
 
@@ -374,8 +373,9 @@ class ControlRuntimeNode(Node):
             return
 
         try:
-            command = self.runtime.resolve_eef_delta(
-                eef_delta_command_to_array(msg).tolist(),
+            intent = motion_intent_from_eef_delta(eef_delta_command_to_array(msg))
+            command = self.runtime.resolve_intent(
+                intent,
                 self.current_joints,
             )
         except Exception as exc:
@@ -389,28 +389,26 @@ class ControlRuntimeNode(Node):
         if not self._has_fresh_joint_state():
             return
         try:
-            chunk = raw_action_chunk_message_to_action_chunk(msg)
-            normalized_steps = tuple(
-                RawActionStep(
-                    step.values,
-                    protocol=step.protocol or self._default_raw_action_protocol,
-                    frame=step.frame or self._default_raw_action_frame,
-                )
-                for step in chunk.steps
+            action_chunk = raw_action_chunk_message_to_action_chunk(
+                msg,
+                default_protocol=self._default_raw_action_protocol,
+                default_frame=self._default_raw_action_frame,
             )
-            normalized_chunk = ActionChunk(
-                steps=normalized_steps,
-                step_duration_sec=chunk.step_duration_sec,
-                metadata=chunk.metadata,
+            intents = motion_intents_from_action_chunk(
+                action_chunk,
+                normalized_velocity_config=self.runtime.normalized_velocity_config,
             )
-            self.runtime.queue_action_chunk(normalized_chunk)
+            self.runtime.queue_intents(
+                intents,
+                step_duration_sec=action_chunk.step_duration_sec,
+            )
             if not self._raw_chunk_received_logged:
                 self.get_logger().info(
                     "Queued first raw action chunk: "
-                    f"steps={len(normalized_chunk.steps)} "
-                    f"step_duration_sec={normalized_chunk.step_duration_sec:.3f} "
-                    f"protocol={normalized_chunk.steps[0].protocol} "
-                    f"frame={normalized_chunk.steps[0].frame}"
+                    f"steps={len(action_chunk.steps)} "
+                    f"step_duration_sec={action_chunk.step_duration_sec:.3f} "
+                    f"protocol={action_chunk.steps[0].protocol} "
+                    f"frame={action_chunk.steps[0].frame}"
                 )
                 self._raw_chunk_received_logged = True
         except Exception as exc:

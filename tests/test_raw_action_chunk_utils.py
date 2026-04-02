@@ -57,3 +57,28 @@ def test_raw_action_chunk_round_trip(monkeypatch) -> None:
     np.testing.assert_allclose(decoded.steps[0].values, action_chunk[0])
     np.testing.assert_allclose(decoded.steps[1].values, action_chunk[1])
     assert decoded.step_duration_sec == 0.1
+
+
+def test_raw_action_chunk_uses_runtime_defaults_when_metadata_is_missing(monkeypatch) -> None:
+    _install_fake_raw_action_chunk_module(monkeypatch)
+
+    from roboneuron_core.utils.raw_action_chunk import raw_action_chunk_message_to_action_chunk
+
+    class IncompleteRawActionChunk:
+        def __init__(self) -> None:
+            self.protocol = ""
+            self.frame = ""
+            self.action_dim = 7
+            self.chunk_length = 1
+            self.step_duration_sec = 0.2
+            self.values = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5]
+
+    decoded = raw_action_chunk_message_to_action_chunk(
+        IncompleteRawActionChunk(),
+        default_protocol="normalized_cartesian_velocity",
+        default_frame="base",
+    )
+
+    assert decoded.steps[0].protocol == "normalized_cartesian_velocity"
+    assert decoded.steps[0].frame == "base"
+    assert decoded.step_duration_sec == 0.2

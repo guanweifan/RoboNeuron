@@ -18,7 +18,7 @@ from roboneuron_core.kernel import (
     MotionIntent,
     NormalizedCartesianVelocityConfig,
     motion_intent_from_eef_delta,
-    motion_intent_from_raw_step,
+    motion_intents_from_action_chunk,
 )
 
 
@@ -81,16 +81,32 @@ class ControlRuntime:
         self.normalized_velocity_config = normalized_velocity_config or NormalizedCartesianVelocityConfig()
         self.scheduler = ChunkScheduler()
 
-    def resolve_eef_delta(self, action: list[float], joint_positions: dict[str, float]) -> ActuationCommand:
-        intent = motion_intent_from_eef_delta(action)
+    def resolve_intent(
+        self,
+        intent: MotionIntent,
+        joint_positions: dict[str, float],
+    ) -> ActuationCommand:
         return self.resolver.resolve(intent, joint_positions)
 
+    def resolve_eef_delta(self, action: list[float], joint_positions: dict[str, float]) -> ActuationCommand:
+        intent = motion_intent_from_eef_delta(action)
+        return self.resolve_intent(intent, joint_positions)
+
+    def queue_intents(
+        self,
+        intents: list[MotionIntent] | tuple[MotionIntent, ...],
+        *,
+        step_duration_sec: float,
+        now: float | None = None,
+    ) -> None:
+        self.scheduler.load(list(intents), step_duration_sec=step_duration_sec, now=now)
+
     def queue_action_chunk(self, chunk: ActionChunk, *, now: float | None = None) -> None:
-        intents = [
-            motion_intent_from_raw_step(step, normalized_velocity_config=self.normalized_velocity_config)
-            for step in chunk.steps
-        ]
-        self.scheduler.load(intents, step_duration_sec=chunk.step_duration_sec, now=now)
+        intents = motion_intents_from_action_chunk(
+            chunk,
+            normalized_velocity_config=self.normalized_velocity_config,
+        )
+        self.queue_intents(intents, step_duration_sec=chunk.step_duration_sec, now=now)
 
     def dispatch_ready(
         self,
@@ -101,7 +117,7 @@ class ControlRuntime:
         intent = self.scheduler.dispatch_ready(now=now)
         if intent is None:
             return None
-        return self.resolver.resolve(intent, joint_positions)
+        return self.resolve_intent(intent, joint_positions)
 
     def clear_action_chunk(self) -> None:
         self.scheduler.clear()

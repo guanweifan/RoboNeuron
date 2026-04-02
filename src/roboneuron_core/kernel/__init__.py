@@ -9,6 +9,7 @@ from .action_semantics import (
     motion_intent_from_eef_delta,
     motion_intent_from_normalized_cartesian_velocity,
     motion_intent_from_raw_step,
+    motion_intents_from_action_chunk,
 )
 from .contracts import (
     DEFAULT_NORMALIZED_CARTESIAN_VELOCITY_PROTOCOL,
@@ -37,6 +38,7 @@ __all__ = [
     "StateSnapshot",
     "TASK_SPACE_STATE_SOURCE",
     "motion_intent_from_eef_delta",
+    "motion_intents_from_action_chunk",
     "motion_intent_from_normalized_cartesian_velocity",
     "motion_intent_from_raw_step",
 ]

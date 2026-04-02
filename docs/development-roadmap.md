@@ -39,7 +39,7 @@ The main gaps are now about **semantic closure**, **observability**, and **repea
 - [ ] Freeze `MotionIntent` as the single semantic core inside the manipulation runtime
 - [ ] Freeze `RawActionChunk` as the model-facing transport contract
 - [ ] Freeze `EEFDeltaCommand` as the debug / manual transport contract
-- [ ] Make every manipulation control path pass through `MotionIntent`
+- [x] Make every manipulation control path pass through `MotionIntent`
 
 ### P1 — Canonical Lane Closure
 
