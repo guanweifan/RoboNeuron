@@ -213,9 +213,13 @@ def _load_ros_runtime() -> tuple[Any, type[Any]]:
             self._output_mode = output_mode
             self._action_protocol = action_protocol
             self._action_frame = action_frame
+            self._output_topic = output_topic
             self._step_duration_sec = step_duration_sec
             self._latest_wrist_image: Image.Image | None = None
             self._latest_task_space_state: np.ndarray | None = None
+            self._first_primary_image_logged = False
+            self._first_task_space_state_logged = False
+            self._first_action_published_logged = False
 
             json_numpy.patch()
             registry = get_registry()
@@ -270,6 +274,9 @@ def _load_ros_runtime() -> tuple[Any, type[Any]]:
         def _state_cb(self, msg: TaskSpaceState) -> None:
             try:
                 self._latest_task_space_state = task_space_state_message_to_array(msg)
+                if not self._first_task_space_state_logged:
+                    self.get_logger().info("Received first task-space state update for VLA inference.")
+                    self._first_task_space_state_logged = True
             except Exception as exc:
                 self.get_logger().error(f"Failed to decode task-space state: {exc}")
 
@@ -278,6 +285,9 @@ def _load_ros_runtime() -> tuple[Any, type[Any]]:
             try:
                 cv_img = self._cv_bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
                 pil_img = Image.fromarray(cv_img)
+                if not self._first_primary_image_logged:
+                    self.get_logger().info("Received first input image for VLA inference.")
+                    self._first_primary_image_logged = True
 
                 observation_input, predict_kwargs = _build_model_observation(
                     model_name=self._model_name,
@@ -304,6 +314,23 @@ def _load_ros_runtime() -> tuple[Any, type[Any]]:
                             frame=self._action_frame,
                         )
                     self._pub.publish(out_msg)
+                    if not self._first_action_published_logged:
+                        if self._output_mode == "raw_action_chunk":
+                            self.get_logger().info(
+                                "Published first VLA raw action chunk: "
+                                f"topic={self._output_topic} "
+                                f"shape={tuple(action_np.shape)} "
+                                f"step_duration_sec={self._step_duration_sec:.3f} "
+                                f"protocol={self._action_protocol} "
+                                f"frame={self._action_frame}"
+                            )
+                        else:
+                            self.get_logger().info(
+                                "Published first VLA action: "
+                                f"topic={self._output_topic} "
+                                f"shape={tuple(action_np.shape)}"
+                            )
+                        self._first_action_published_logged = True
             except Exception as exc:
                 self.get_logger().error(f"VLA inference callback failed: {exc}")
 

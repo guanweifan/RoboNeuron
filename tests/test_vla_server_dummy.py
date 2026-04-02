@@ -19,18 +19,48 @@ def _install_fake_ros_modules(monkeypatch) -> None:
 
     fake_rclpy_node = types.ModuleType("rclpy.node")
 
+    class FakeLogger:
+        def __init__(self) -> None:
+            self.infos: list[str] = []
+            self.errors: list[str] = []
+
+        def info(self, message: str) -> None:
+            self.infos.append(message)
+
+        def error(self, message: str) -> None:
+            self.errors.append(message)
+
+    class FakePublisher:
+        def __init__(self) -> None:
+            self.messages = []
+
+        def publish(self, msg) -> None:
+            self.messages.append(msg)
+
     class FakeNode:
         def __init__(self, *args, **kwargs) -> None:
             del args, kwargs
+            self._logger = FakeLogger()
+
+        def create_subscription(self, *args, **kwargs):
+            del args, kwargs
+            return object()
+
+        def create_publisher(self, *args, **kwargs) -> FakePublisher:
+            del args, kwargs
+            return FakePublisher()
+
+        def get_logger(self) -> FakeLogger:
+            return self._logger
 
     fake_rclpy_node.Node = FakeNode
 
     fake_cv_bridge = types.ModuleType("cv_bridge")
 
     class FakeCvBridge:
-        def imgmsg_to_cv2(self, *args, **kwargs):  # pragma: no cover - not used here
+        def imgmsg_to_cv2(self, msg, *args, **kwargs):  # pragma: no cover - not used here
             del args, kwargs
-            return None
+            return msg.image
 
     fake_cv_bridge.CvBridge = FakeCvBridge
 
@@ -38,7 +68,8 @@ def _install_fake_ros_modules(monkeypatch) -> None:
     fake_sensor_msgs_msg = types.ModuleType("sensor_msgs.msg")
 
     class FakeRosImage:
-        pass
+        def __init__(self, image=None) -> None:
+            self.image = image
 
     fake_sensor_msgs_msg.Image = FakeRosImage
     fake_sensor_msgs.msg = fake_sensor_msgs_msg
@@ -152,3 +183,66 @@ def test_start_vla_inference_allows_dummy_without_model_path(monkeypatch) -> Non
     assert vla_server._VLA_SESSION.status == ExecutionSessionStatus.STOPPED
     assert vla_server._VLA_SESSION.history[-1].details["requested_by"] == "mcp"
     assert vla_server._VLA_HEALTH.level == HealthLevel.IDLE
+
+
+def test_vla_ros_node_logs_first_state_image_and_action(monkeypatch) -> None:
+    import numpy as np
+
+    _install_fake_ros_modules(monkeypatch)
+    module_name = "roboneuron_core.servers.vla_server"
+    sys.modules.pop(module_name, None)
+    sys.modules.pop("roboneuron_core.utils.eef_delta", None)
+    vla_server = importlib.import_module(module_name)
+
+    class FakeWrapper:
+        def __init__(self, model_path: str, **kwargs) -> None:
+            del kwargs
+            self.model_path = model_path
+
+        def load(self) -> None:
+            return None
+
+        def predict_action(self, image, instruction: str, **kwargs):
+            del image, instruction, kwargs
+            return np.array([[0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]], dtype=np.float32)
+
+    monkeypatch.setattr(vla_server, "get_registry", lambda: {"dummy": FakeWrapper})
+    monkeypatch.setattr(vla_server, "torch", None)
+
+    _, node_cls = vla_server._load_ros_runtime()
+    node = node_cls(
+        model_name="dummy",
+        model_path="dummy-path",
+        model_kwargs={},
+        input_topic="/camera/color/image_raw",
+        output_topic="/raw_action_chunk",
+        instruction="pick up the object",
+        output_mode="raw_action_chunk",
+        action_protocol="normalized_cartesian_velocity",
+        action_frame="tool",
+        step_duration_sec=0.2,
+        wrist_input_topic=None,
+        state_topic="/task_space_state",
+    )
+
+    state_msg = sys.modules["roboneuron_interfaces.msg"].TaskSpaceState()
+    state_msg.x = 0.1
+    state_msg.y = 0.2
+    state_msg.z = 0.3
+    state_msg.roll = 0.0
+    state_msg.pitch = 0.1
+    state_msg.yaw = -0.1
+    state_msg.gripper_open_fraction = 0.75
+
+    image_msg = sys.modules["sensor_msgs.msg"].Image(
+        image=np.zeros((16, 16, 3), dtype=np.uint8)
+    )
+
+    node._state_cb(state_msg)
+    node._image_cb(image_msg)
+
+    assert node.get_logger().errors == []
+    assert any("Received first task-space state update" in msg for msg in node.get_logger().infos)
+    assert any("Received first input image for VLA inference" in msg for msg in node.get_logger().infos)
+    assert any("Published first VLA raw action chunk" in msg for msg in node.get_logger().infos)
+    assert len(node._pub.messages) == 1
