@@ -32,6 +32,7 @@ class OpenVLAOFTSubprocessClient:
         attn_implementation: str | None = None,
         dtype: str = "bfloat16",
         device: str = "auto",
+        runtime_quantization: str = "none",
         low_cpu_mem_usage: bool = True,
         use_l1_regression: bool | None = None,
         use_diffusion: bool | None = None,
@@ -67,6 +68,7 @@ class OpenVLAOFTSubprocessClient:
         self.attn_implementation = attn_implementation
         self.dtype = dtype
         self.device = device
+        self.runtime_quantization = runtime_quantization
         self.low_cpu_mem_usage = low_cpu_mem_usage
         self.use_l1_regression = use_l1_regression
         self.use_diffusion = use_diffusion
@@ -117,6 +119,8 @@ class OpenVLAOFTSubprocessClient:
             self.dtype,
             "--device",
             self.device,
+            "--runtime-quantization",
+            self.runtime_quantization,
             "--num-diffusion-steps-inference",
             str(self.num_diffusion_steps_inference),
             "--lora-rank",

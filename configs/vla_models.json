@@ -3,6 +3,7 @@
         "path": "checkpoints/openvla/openvla-7b",
         "runtime_python": ".venvs/openvla/bin/python",
         "attn_implementation": "flash_attention_2",
+        "runtime_quantization": "4bit",
         "default_unnorm_key": "bridge_orig",
         "runtime_startup_timeout_sec": 900
     },
@@ -10,6 +11,7 @@
         "path": "checkpoints/openvla-oft/openvla-oft-pick-banana",
         "runtime_python": ".venvs/openvla-oft/bin/python",
         "attn_implementation": "flash_attention_2",
+        "runtime_quantization": "4bit",
         "default_unnorm_key": "vr_banana",
         "runtime_startup_timeout_sec": 1800,
         "robot_platform": "bridge",

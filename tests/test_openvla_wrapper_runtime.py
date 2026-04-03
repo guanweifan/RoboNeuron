@@ -3,11 +3,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-torch = pytest.importorskip("torch")
-from PIL import Image
-
-from roboneuron_core.adapters.vla.openvla import OpenVLAWrapper
-
 
 class FakeRuntime:
     def __init__(self, **kwargs) -> None:
@@ -35,10 +30,20 @@ class FakeRuntime:
 
 
 def test_openvla_wrapper_uses_subprocess_runtime(monkeypatch) -> None:
+    torch = pytest.importorskip("torch")
+    from PIL import Image
+
+    from roboneuron_core.adapters.vla.openvla import OpenVLAWrapper
+
     fake_runtime = FakeRuntime()
+
+    def _fake_runtime_factory(**kwargs):
+        fake_runtime.kwargs = kwargs
+        return fake_runtime
+
     monkeypatch.setattr(
         "roboneuron_core.adapters.vla.openvla.OpenVLASubprocessClient",
-        lambda **kwargs: fake_runtime,
+        _fake_runtime_factory,
     )
 
     wrapper = OpenVLAWrapper(
@@ -46,6 +51,7 @@ def test_openvla_wrapper_uses_subprocess_runtime(monkeypatch) -> None:
         runtime_python="/tmp/openvla/bin/python",
         attn_implementation=None,
         dtype=torch.float32,
+        runtime_quantization="4bit",
         default_unnorm_key="bridge_orig",
     )
     wrapper.load()
@@ -56,6 +62,7 @@ def test_openvla_wrapper_uses_subprocess_runtime(monkeypatch) -> None:
     )
 
     assert fake_runtime.loaded
+    assert fake_runtime.kwargs["runtime_quantization"] == "4bit"
     np.testing.assert_allclose(action, np.zeros((1, 7), dtype=np.float32))
     assert fake_runtime.calls == [
         {

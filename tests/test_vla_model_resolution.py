@@ -54,6 +54,7 @@ def test_resolve_model_spec_supports_runtime_kwargs(monkeypatch) -> None:
                 "path": "checkpoints/openvla/openvla-7b",
                 "kwargs": {
                     "runtime_python": ".venvs/openvla/bin/python",
+                    "runtime_quantization": "4bit",
                     "default_unnorm_key": "bridge_orig",
                 },
             }
@@ -65,6 +66,7 @@ def test_resolve_model_spec_supports_runtime_kwargs(monkeypatch) -> None:
     assert model_path == "checkpoints/openvla/openvla-7b"
     assert model_kwargs == {
         "runtime_python": ".venvs/openvla/bin/python",
+        "runtime_quantization": "4bit",
         "default_unnorm_key": "bridge_orig",
     }
 
@@ -84,6 +86,7 @@ def test_resolve_model_spec_supports_openvla_oft_runtime_kwargs(monkeypatch) -> 
                 "path": "checkpoints/openvla-oft/openvla-oft-pick-banana",
                 "kwargs": {
                     "runtime_python": ".venvs/openvla-oft/bin/python",
+                    "runtime_quantization": "8bit",
                     "default_unnorm_key": "vr_banana",
                     "robot_platform": "bridge",
                     "use_proprio": True,
@@ -97,6 +100,7 @@ def test_resolve_model_spec_supports_openvla_oft_runtime_kwargs(monkeypatch) -> 
     assert model_path == "checkpoints/openvla-oft/openvla-oft-pick-banana"
     assert model_kwargs == {
         "runtime_python": ".venvs/openvla-oft/bin/python",
+        "runtime_quantization": "8bit",
         "default_unnorm_key": "vr_banana",
         "robot_platform": "bridge",
         "use_proprio": True,

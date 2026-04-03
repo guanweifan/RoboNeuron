@@ -7,10 +7,10 @@ import json
 import logging
 import sys
 import traceback
+import types
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
-import types
 
 import numpy as np
 import torch
@@ -132,6 +132,62 @@ def _resolve_attn_implementation(attn_implementation: str | None, device: torch.
         return None
 
     return attn_implementation
+
+
+def _resolve_runtime_quantization(
+    runtime_quantization: str,
+    device: torch.device,
+) -> str:
+    normalized = runtime_quantization.strip().lower()
+    if normalized not in {"none", "8bit", "4bit"}:
+        raise ValueError(
+            "Unsupported runtime quantization: "
+            f"{runtime_quantization}. Expected one of: none, 8bit, 4bit."
+        )
+    if normalized != "none" and device.type != "cuda":
+        logger.warning(
+            "Disabling %s quantization because the OpenVLA-OFT runtime is running on %s.",
+            normalized,
+            device.type,
+        )
+        return "none"
+    return normalized
+
+
+def _build_quantization_kwargs(
+    runtime_quantization: str,
+    *,
+    device: torch.device,
+    torch_dtype: torch.dtype,
+) -> dict[str, Any]:
+    if runtime_quantization == "none":
+        return {}
+
+    transformers = importlib.import_module("transformers")
+    bits_and_bytes_config = getattr(transformers, "BitsAndBytesConfig", None)
+    if bits_and_bytes_config is None:
+        raise RuntimeError(
+            "runtime_quantization requires transformers.BitsAndBytesConfig. "
+            "Install a runtime with bitsandbytes support."
+        )
+
+    quantization_kwargs: dict[str, Any] = {}
+    if runtime_quantization == "8bit":
+        quantization_kwargs["load_in_8bit"] = True
+    else:
+        quantization_kwargs.update(
+            {
+                "load_in_4bit": True,
+                "bnb_4bit_compute_dtype": torch_dtype,
+                "bnb_4bit_quant_type": "nf4",
+            }
+        )
+
+    device_index = device.index if device.index is not None else 0
+    return {
+        "quantization_config": bits_and_bytes_config(**quantization_kwargs),
+        "device_map": {"": device_index},
+    }
 
 
 def _load_json_if_present(path: Path) -> dict[str, Any] | None:
@@ -263,6 +319,7 @@ class OpenVLAOFTWorker:
         attn_implementation: str | None,
         dtype_name: str,
         device_name: str,
+        runtime_quantization: str,
         low_cpu_mem_usage: bool,
         use_l1_regression: bool | None,
         use_diffusion: bool | None,
@@ -289,6 +346,7 @@ class OpenVLAOFTWorker:
             self.device = torch.device(device_name)
         self.torch_dtype = _resolve_dtype(dtype_name, self.device)
         self.attn_implementation = _resolve_attn_implementation(attn_implementation, self.device)
+        self.runtime_quantization = _resolve_runtime_quantization(runtime_quantization, self.device)
         self.use_l1_regression = use_l1_regression
         self.use_diffusion = use_diffusion
         self.use_film = use_film
@@ -359,16 +417,16 @@ class OpenVLAOFTWorker:
                 backbone_host.vision_backbone.load_state_dict(vision_backbone_state_dict)
 
             self.model.eval()
-            self.model = self.model.to(self.device, dtype=self.torch_dtype)
+            if self.runtime_quantization == "none":
+                self.model = self.model.to(self.device, dtype=self.torch_dtype)
             self.model.vision_backbone.set_num_images_in_input(self.resolved_num_images_in_input)
 
             if self.dataset_stats:
                 self._set_model_norm_stats(self.dataset_stats)
 
             norm_stats = self._get_model_norm_stats()
-            if self.default_unnorm_key is None and norm_stats:
-                if isinstance(norm_stats, dict) and len(norm_stats) == 1:
-                    self.default_unnorm_key = next(iter(norm_stats.keys()))
+            if self.default_unnorm_key is None and isinstance(norm_stats, dict) and len(norm_stats) == 1:
+                self.default_unnorm_key = next(iter(norm_stats.keys()))
 
             if hasattr(self.processor, "image_processor"):
                 input_sizes = getattr(self.processor.image_processor, "input_sizes", None)
@@ -543,6 +601,11 @@ class OpenVLAOFTWorker:
                 torch_dtype=self.torch_dtype,
                 low_cpu_mem_usage=self.low_cpu_mem_usage,
                 local_files_only=True,
+                **_build_quantization_kwargs(
+                    self.runtime_quantization,
+                    device=self.device,
+                    torch_dtype=self.torch_dtype,
+                ),
             )
 
         adapter_dir = self.model_path / "lora_adapter"
@@ -560,6 +623,11 @@ class OpenVLAOFTWorker:
             torch_dtype=self.torch_dtype,
             low_cpu_mem_usage=self.low_cpu_mem_usage,
             local_files_only=True,
+            **_build_quantization_kwargs(
+                self.runtime_quantization,
+                device=self.device,
+                torch_dtype=self.torch_dtype,
+            ),
         )
         return PeftModel.from_pretrained(base_model, adapter_dir).merge_and_unload()
 
@@ -593,10 +661,10 @@ class OpenVLAOFTWorker:
 
     def _set_model_norm_stats(self, norm_stats: dict[str, Any]) -> None:
         for current_model in self._iter_wrapped_models(self.model):
-            setattr(current_model, "norm_stats", norm_stats)
+            current_model.norm_stats = norm_stats
             config = getattr(current_model, "config", None)
             if config is not None:
-                setattr(config, "norm_stats", norm_stats)
+                config.norm_stats = norm_stats
 
     def _get_model_norm_stats(self) -> dict[str, Any] | None:
         for current_model in self._iter_wrapped_models(self.model):
@@ -703,6 +771,7 @@ def main() -> None:
     parser.add_argument("--attn-implementation", default=None, help="Transformers attention backend")
     parser.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
     parser.add_argument("--device", default="auto", help="Runtime device spec, e.g. auto / cuda:0 / cpu")
+    parser.add_argument("--runtime-quantization", default="none", choices=["none", "8bit", "4bit"])
     parser.add_argument("--low-cpu-mem-usage", action="store_true", help="Enable transformers low_cpu_mem_usage")
     parser.add_argument("--use-l1-regression", type=_str_to_optional_bool, default=None)
     parser.add_argument("--use-diffusion", type=_str_to_optional_bool, default=None)
@@ -725,6 +794,7 @@ def main() -> None:
         attn_implementation=args.attn_implementation,
         dtype_name=args.dtype,
         device_name=args.device,
+        runtime_quantization=args.runtime_quantization,
         low_cpu_mem_usage=args.low_cpu_mem_usage,
         use_l1_regression=args.use_l1_regression,
         use_diffusion=args.use_diffusion,
@@ -748,6 +818,7 @@ def main() -> None:
                 "event": "ready",
                 "device": str(worker.device),
                 "dtype": str(worker.torch_dtype),
+                "runtime_quantization": worker.runtime_quantization,
                 "norm_keys": norm_keys,
                 "robot_platform": worker.robot_platform,
                 "num_images_in_input": worker.resolved_num_images_in_input,

@@ -47,6 +47,7 @@ class OpenVLASubprocessClient:
         attn_implementation: str | None = None,
         dtype: str = "bfloat16",
         device: str = "auto",
+        runtime_quantization: str = "none",
         low_cpu_mem_usage: bool = True,
     ) -> None:
         project_root = _project_root()
@@ -70,6 +71,7 @@ class OpenVLASubprocessClient:
         self.attn_implementation = attn_implementation
         self.dtype = dtype
         self.device = device
+        self.runtime_quantization = runtime_quantization
         self.low_cpu_mem_usage = low_cpu_mem_usage
         self.project_root = project_root
 
@@ -104,6 +106,8 @@ class OpenVLASubprocessClient:
             self.dtype,
             "--device",
             self.device,
+            "--runtime-quantization",
+            self.runtime_quantization,
         ]
         if self.attn_implementation is not None:
             cmd.extend(["--attn-implementation", self.attn_implementation])

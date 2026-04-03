@@ -25,6 +25,7 @@ uv pip install --python "$RUNTIME_DIR/bin/python" \
   "transformers==4.40.1" \
   "huggingface_hub<1" \
   "accelerate>=0.25.0" \
+  "bitsandbytes>=0.43.1" \
   "sentencepiece==0.1.99" \
   "safetensors>=0.4.1" \
   "einops>=0.7" \

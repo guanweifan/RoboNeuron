@@ -24,6 +24,7 @@ class OpenVLAWrapper(ModelWrapper):
         model_path: str | Path,
         attn_implementation: str | None = None,
         dtype: torch.dtype | str | None = None,
+        runtime_quantization: str = "none",
         default_unnorm_key: str | None = None,
         runtime_python: str | Path | None = None,
         runtime_module: str = "roboneuron_core.runtime.openvla_worker",
@@ -47,6 +48,7 @@ class OpenVLAWrapper(ModelWrapper):
             attn_implementation=attn_implementation,
             dtype=self._dtype_name(self.torch_dtype),
             device=runtime_device,
+            runtime_quantization=runtime_quantization,
             low_cpu_mem_usage=self.kwargs.get("low_cpu_mem_usage", True),
         )
 

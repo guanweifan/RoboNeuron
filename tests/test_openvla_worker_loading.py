@@ -64,6 +64,7 @@ def test_openvla_worker_load_uses_local_checkpoint_loading(monkeypatch) -> None:
         attn_implementation="flash_attention_2",
         dtype_name="float32",
         device_name="cpu",
+        runtime_quantization="none",
         low_cpu_mem_usage=True,
     )
     worker.load()
@@ -74,3 +75,80 @@ def test_openvla_worker_load_uses_local_checkpoint_loading(monkeypatch) -> None:
     assert calls["model"]["local_files_only"] is True
     assert calls["model"]["attn_implementation"] is None
     assert calls["device"] == {"device": "cpu", "dtype": "torch.float32"}
+
+
+def test_openvla_worker_load_supports_4bit_quantization(monkeypatch) -> None:
+    fake_prismatic = types.ModuleType("prismatic")
+    fake_prismatic_extern = types.ModuleType("prismatic.extern")
+    fake_prismatic_hf = types.ModuleType("prismatic.extern.hf")
+    fake_modeling = types.ModuleType("prismatic.extern.hf.modeling_prismatic")
+    fake_processing = types.ModuleType("prismatic.extern.hf.processing_prismatic")
+    fake_transformers = types.ModuleType("transformers")
+
+    calls: dict[str, dict] = {}
+
+    class FakeImageProcessor:
+        @classmethod
+        def from_pretrained(cls, model_path, **kwargs):
+            calls["image_processor"] = {"model_path": model_path, **kwargs}
+            return object()
+
+    class FakeProcessor:
+        def __init__(self, *, image_processor, tokenizer):
+            del image_processor, tokenizer
+
+    class FakeTokenizer:
+        @classmethod
+        def from_pretrained(cls, model_path, **kwargs):
+            calls["tokenizer"] = {"model_path": model_path, **kwargs}
+            return cls()
+
+    class FakeBitsAndBytesConfig:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    class FakeModel:
+        @classmethod
+        def from_pretrained(cls, model_path, **kwargs):
+            calls["model"] = {"model_path": model_path, **kwargs}
+            return cls()
+
+        def to(self, device, dtype=None):
+            calls["device"] = {"device": str(device), "dtype": str(dtype)}
+            return self
+
+    fake_modeling.OpenVLAForActionPrediction = FakeModel
+    fake_processing.PrismaticProcessor = FakeProcessor
+    fake_processing.PrismaticImageProcessor = FakeImageProcessor
+    fake_transformers.AutoTokenizer = FakeTokenizer
+    fake_transformers.BitsAndBytesConfig = FakeBitsAndBytesConfig
+
+    monkeypatch.setitem(sys.modules, "prismatic", fake_prismatic)
+    monkeypatch.setitem(sys.modules, "prismatic.extern", fake_prismatic_extern)
+    monkeypatch.setitem(sys.modules, "prismatic.extern.hf", fake_prismatic_hf)
+    monkeypatch.setitem(sys.modules, "prismatic.extern.hf.modeling_prismatic", fake_modeling)
+    monkeypatch.setitem(sys.modules, "prismatic.extern.hf.processing_prismatic", fake_processing)
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+
+    sys.modules.pop("roboneuron_core.runtime.openvla_worker", None)
+    openvla_worker = importlib.import_module("roboneuron_core.runtime.openvla_worker")
+
+    worker = openvla_worker.OpenVLAWorker(
+        model_path="checkpoints/openvla/openvla-7b",
+        attn_implementation="flash_attention_2",
+        dtype_name="float16",
+        device_name="cuda:0",
+        runtime_quantization="4bit",
+        low_cpu_mem_usage=True,
+    )
+    worker.load()
+
+    quantization_config = calls["model"]["quantization_config"]
+    assert isinstance(quantization_config, FakeBitsAndBytesConfig)
+    assert quantization_config.kwargs == {
+        "load_in_4bit": True,
+        "bnb_4bit_compute_dtype": openvla_worker.torch.float16,
+        "bnb_4bit_quant_type": "nf4",
+    }
+    assert calls["model"]["device_map"] == {"": 0}
+    assert "device" not in calls

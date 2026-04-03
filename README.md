@@ -265,6 +265,7 @@ Edit `configs/vla_models.json` to specify model checkpoints and runtime configur
     "path": "checkpoints/openvla/openvla-7b",
     "runtime_python": ".venvs/openvla/bin/python",
     "attn_implementation": "flash_attention_2",
+    "runtime_quantization": "4bit",
     "default_unnorm_key": "bridge_orig",
     "runtime_startup_timeout_sec": 900
   },
@@ -272,6 +273,7 @@ Edit `configs/vla_models.json` to specify model checkpoints and runtime configur
     "path": "checkpoints/openvla-oft/openvla-oft-pick-banana",
     "runtime_python": ".venvs/openvla-oft/bin/python",
     "attn_implementation": "flash_attention_2",
+    "runtime_quantization": "4bit",
     "default_unnorm_key": "vr_banana",
     "runtime_startup_timeout_sec": 1800,
     "robot_platform": "bridge",
@@ -282,6 +284,8 @@ Edit `configs/vla_models.json` to specify model checkpoints and runtime configur
   }
 }
 ```
+
+`runtime_quantization` accepts `none`, `8bit`, or `4bit`. For 7B checkpoints, `4bit` is a practical default on constrained GPUs. On CPU runtimes, RoboNeuron automatically disables quantization and falls back to the configured dtype.
 
 When `model_path` is omitted from `start_vla_inference`, RoboNeuron resolves both the checkpoint path and the runtime-specific kwargs from this config file.
 
