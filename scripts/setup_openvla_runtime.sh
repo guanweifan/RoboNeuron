@@ -25,11 +25,14 @@ uv pip install --python "$RUNTIME_DIR/bin/python" \
   "transformers==4.40.1" \
   "huggingface_hub<1" \
   "accelerate>=0.25.0" \
-  "bitsandbytes>=0.43.1" \
   "sentencepiece==0.1.99" \
   "safetensors>=0.4.1" \
   "einops>=0.7" \
   "json-numpy>=2.1.1"
+
+echo "[openvla-runtime] installing bitsandbytes without dependency upgrades"
+uv pip install --python "$RUNTIME_DIR/bin/python" --no-deps \
+  "bitsandbytes==0.43.1"
 
 if [[ -f "$FLASH_ATTN_WHEEL" ]]; then
   echo "[openvla-runtime] installing local flash-attn wheel"

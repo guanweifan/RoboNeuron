@@ -190,6 +190,32 @@ def _build_quantization_kwargs(
     }
 
 
+def _enable_quantized_force_hooks() -> None:
+    """Force accelerate hook dispatch for quantized models on a single device.
+
+    Transformers 4.40.x routes quantized single-device loads through
+    ``dispatch_model(...)->model.to(device)`` unless ``force_hooks`` is set.
+    bitsandbytes < 0.43.2 rejects that ``.to(...)`` call for 4-bit models, so
+    patch the local dispatch entrypoint used by ``from_pretrained`` to keep the
+    quantized path on the hook-based branch.
+    """
+
+    modeling_utils = importlib.import_module("transformers.modeling_utils")
+    if getattr(modeling_utils, "_roboneuron_quantized_force_hooks_enabled", False):
+        return
+
+    original_dispatch_model = getattr(modeling_utils, "dispatch_model", None)
+    if original_dispatch_model is None:
+        raise RuntimeError("transformers.modeling_utils.dispatch_model is unavailable.")
+
+    def _dispatch_model_with_force_hooks(model, *args, **kwargs):
+        kwargs.setdefault("force_hooks", True)
+        return original_dispatch_model(model, *args, **kwargs)
+
+    modeling_utils.dispatch_model = _dispatch_model_with_force_hooks
+    modeling_utils._roboneuron_quantized_force_hooks_enabled = True
+
+
 def _load_json_if_present(path: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
@@ -235,6 +261,52 @@ def _infer_robot_platform(model_path: Path, requested: str | None) -> str:
 
     reverse_map = {value: key for key, value in _PROFILE_TO_PROPRIO_DIM.items()}
     return reverse_map.get(proprio_dim, "bridge")
+
+
+def _prepare_component_state_dict_for_quantized_load(
+    state_dict: dict[str, Any],
+    *,
+    runtime_quantization: str,
+) -> tuple[dict[str, Any], bool]:
+    """Drop full-precision base-layer tensors when loading LoRA checkpoints into quantized modules."""
+
+    if runtime_quantization == "none":
+        return state_dict, False
+
+    filtered = {
+        key: value
+        for key, value in state_dict.items()
+        if ".base_layer." not in key
+    }
+    dropped_keys = len(state_dict) - len(filtered)
+    if dropped_keys == 0:
+        return state_dict, False
+
+    logger.info(
+        "Dropped %s base-layer tensors from a quantized OpenVLA-OFT component checkpoint.",
+        dropped_keys,
+    )
+    return filtered, True
+
+
+def _move_film_projection_layers_to_device(
+    module: Any,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> int:
+    """Move dynamically added FiLM projection layers without touching quantized backbone modules."""
+
+    moved_blocks = 0
+    for child in module.modules():
+        scale = getattr(child, "scale", None)
+        shift = getattr(child, "shift", None)
+        if not isinstance(scale, torch.nn.Module) or not isinstance(shift, torch.nn.Module):
+            continue
+        scale.to(device=device, dtype=dtype)
+        shift.to(device=device, dtype=dtype)
+        moved_blocks += 1
+    return moved_blocks
 
 
 def _activate_robot_platform(profile: str) -> None:
@@ -407,6 +479,10 @@ class OpenVLAOFTWorker:
             if self.resolved_use_film:
                 checkpoint = self._latest_component_checkpoint("vision_backbone")
                 vision_backbone_state_dict = _load_component_state_dict(checkpoint)
+                vision_backbone_state_dict, dropped_base_layers = _prepare_component_state_dict_for_quantized_load(
+                    vision_backbone_state_dict,
+                    runtime_quantization=self.runtime_quantization,
+                )
                 if self._state_dict_uses_lora(vision_backbone_state_dict):
                     self.model = self._apply_lora_scaffold(self.model)
                 backbone_host = self._vision_backbone_host(self.model)
@@ -414,7 +490,21 @@ class OpenVLAOFTWorker:
                     vision_backbone=backbone_host.vision_backbone,
                     llm_dim=self.model.llm_dim,
                 )
-                backbone_host.vision_backbone.load_state_dict(vision_backbone_state_dict)
+                backbone_host.vision_backbone.load_state_dict(
+                    vision_backbone_state_dict,
+                    strict=not dropped_base_layers,
+                )
+                if self.runtime_quantization != "none":
+                    moved_film_blocks = _move_film_projection_layers_to_device(
+                        backbone_host.vision_backbone,
+                        device=self.device,
+                        dtype=self.torch_dtype,
+                    )
+                    logger.info(
+                        "Moved %s FiLM projection blocks to %s for quantized OpenVLA-OFT inference.",
+                        moved_film_blocks,
+                        self.device,
+                    )
 
             self.model.eval()
             if self.runtime_quantization == "none":
@@ -594,6 +684,8 @@ class OpenVLAOFTWorker:
         modules = self._runtime_modules or self._import_runtime_modules()
         self._runtime_modules = modules
         model_class = modules["OpenVLAForActionPrediction"]
+        if self.runtime_quantization != "none":
+            _enable_quantized_force_hooks()
         if self._has_root_model_weights():
             return model_class.from_pretrained(
                 self.model_path,

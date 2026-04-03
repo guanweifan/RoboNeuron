@@ -46,6 +46,8 @@ __pypackages__/
 *.swp
 *.swo
 *~
+AGENTS.md
+CLAUDE.md
 
 # OS junk
 .DS_Store
@@ -94,4 +96,5 @@ nomcp-version
 *:[Zz]one.Identifier*
 
 # Local top-level reference trees are optional and should not be committed by default.
-/references/
+local/
+references/

@@ -345,3 +345,138 @@ def test_openvla_oft_worker_load_supports_4bit_quantization(monkeypatch, tmp_pat
     }
     assert calls["model"]["device_map"] == {"": 0}
     assert "device" not in calls
+
+
+def test_openvla_oft_worker_quantized_load_enables_force_hooks(monkeypatch, tmp_path) -> None:
+    checkpoint_dir = tmp_path / "openvla-oft"
+    checkpoint_dir.mkdir()
+    (checkpoint_dir / "model.safetensors.index.json").write_text("{}", encoding="utf-8")
+    (checkpoint_dir / "dataset_statistics.json").write_text(
+        json.dumps(
+            {
+                "vr_banana": {
+                    "action": {"min": [0.0] * 7, "max": [1.0] * 7, "q01": [0.0] * 7, "q99": [1.0] * 7},
+                    "proprio": {"min": [0.0] * 7, "max": [1.0] * 7, "q01": [0.0] * 7, "q99": [1.0] * 7},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    calls: dict[str, object] = {}
+
+    fake_processing = types.ModuleType("prismatic.extern.hf.processing_prismatic")
+    fake_modeling = types.ModuleType("prismatic.extern.hf.modeling_prismatic")
+    fake_transformers = types.ModuleType("transformers")
+    fake_transformers.__path__ = []  # type: ignore[attr-defined]
+    fake_modeling_utils = types.ModuleType("transformers.modeling_utils")
+
+    class FakeImageProcessor:
+        @classmethod
+        def from_pretrained(cls, model_path, **kwargs):
+            del model_path, kwargs
+            instance = cls()
+            instance.image_processor = types.SimpleNamespace(input_sizes=[(3, 224, 224)])
+            return instance
+
+    class FakeProcessor:
+        def __init__(self, *, image_processor, tokenizer):
+            del image_processor, tokenizer
+            self.image_processor = types.SimpleNamespace(input_sizes=[(3, 224, 224)])
+
+    class FakeTokenizer:
+        @classmethod
+        def from_pretrained(cls, model_path, **kwargs):
+            del model_path, kwargs
+            return cls()
+
+    class FakeBitsAndBytesConfig:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    class FakeVisionBackbone:
+        def set_num_images_in_input(self, value):
+            del value
+
+    class FakeModel:
+        def __init__(self) -> None:
+            self.llm_dim = 128
+            self.vision_backbone = FakeVisionBackbone()
+            self.norm_stats = {
+                "vr_banana": {
+                    "proprio": {"min": [0.0] * 7, "max": [1.0] * 7, "q01": [0.0] * 7, "q99": [1.0] * 7}
+                }
+            }
+
+        @classmethod
+        def from_pretrained(cls, model_path, **kwargs):
+            del model_path, kwargs
+            fake_modeling_utils.dispatch_model(object(), device_map={"": 0})
+            return cls()
+
+        def eval(self):
+            return self
+
+        def to(self, device, dtype=None):
+            del device, dtype
+            return self
+
+    def fake_dispatch_model(model, *args, **kwargs):
+        del model, args
+        calls["force_hooks"] = kwargs.get("force_hooks")
+        return object()
+
+    fake_processing.PrismaticImageProcessor = FakeImageProcessor
+    fake_processing.PrismaticProcessor = FakeProcessor
+    fake_modeling.OpenVLAForActionPrediction = FakeModel
+    fake_transformers.AutoTokenizer = FakeTokenizer
+    fake_transformers.BitsAndBytesConfig = FakeBitsAndBytesConfig
+    fake_modeling_utils.dispatch_model = fake_dispatch_model
+
+    monkeypatch.setitem(sys.modules, "prismatic.extern.hf.processing_prismatic", fake_processing)
+    monkeypatch.setitem(sys.modules, "prismatic.extern.hf.modeling_prismatic", fake_modeling)
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+    monkeypatch.setitem(sys.modules, "transformers.modeling_utils", fake_modeling_utils)
+
+    sys.modules.pop("roboneuron_core.runtime.openvla_oft_worker", None)
+    openvla_oft_worker = importlib.import_module("roboneuron_core.runtime.openvla_oft_worker")
+
+    monkeypatch.setattr(openvla_oft_worker, "_prepare_prismatic_shallow_packages", lambda: None)
+    monkeypatch.setattr(
+        openvla_oft_worker.OpenVLAOFTWorker,
+        "_import_runtime_modules",
+        lambda self: {
+            "OpenVLAForActionPrediction": FakeModel,
+            "PrismaticImageProcessor": FakeImageProcessor,
+            "PrismaticProcessor": FakeProcessor,
+            "L1RegressionActionHead": object,
+            "DiffusionActionHead": object,
+            "NoisyActionProjector": object,
+            "ProprioProjector": object,
+            "FiLMedPrismaticVisionBackbone": object,
+        },
+    )
+
+    worker = openvla_oft_worker.OpenVLAOFTWorker(
+        model_path=str(checkpoint_dir),
+        attn_implementation="flash_attention_2",
+        dtype_name="float16",
+        device_name="cuda:0",
+        runtime_quantization="4bit",
+        low_cpu_mem_usage=True,
+        use_l1_regression=False,
+        use_diffusion=False,
+        use_film=False,
+        use_proprio=False,
+        num_images_in_input=1,
+        num_diffusion_steps_inference=50,
+        lora_rank=32,
+        center_crop=True,
+        unnorm_key="vr_banana",
+        robot_platform="bridge",
+        default_proprio=None,
+        base_model_path=None,
+    )
+    worker.load()
+
+    assert calls["force_hooks"] is True

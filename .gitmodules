@@ -4,3 +4,6 @@
 [submodule "third_party/vla_src/openvla-oft"]
 	path = third_party/vla_src/openvla-oft
 	url = https://github.com/moojink/openvla-oft.git
+[submodule "third_party/vla_src/openpi"]
+	path = third_party/vla_src/openpi
+	url = https://github.com/Physical-Intelligence/openpi.git

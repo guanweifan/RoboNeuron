@@ -152,3 +152,82 @@ def test_openvla_worker_load_supports_4bit_quantization(monkeypatch) -> None:
     }
     assert calls["model"]["device_map"] == {"": 0}
     assert "device" not in calls
+
+
+def test_openvla_worker_quantized_load_enables_force_hooks(monkeypatch) -> None:
+    fake_prismatic = types.ModuleType("prismatic")
+    fake_prismatic_extern = types.ModuleType("prismatic.extern")
+    fake_prismatic_hf = types.ModuleType("prismatic.extern.hf")
+    fake_modeling = types.ModuleType("prismatic.extern.hf.modeling_prismatic")
+    fake_processing = types.ModuleType("prismatic.extern.hf.processing_prismatic")
+    fake_transformers = types.ModuleType("transformers")
+    fake_transformers.__path__ = []  # type: ignore[attr-defined]
+    fake_modeling_utils = types.ModuleType("transformers.modeling_utils")
+
+    calls: dict[str, object] = {}
+
+    class FakeImageProcessor:
+        @classmethod
+        def from_pretrained(cls, model_path, **kwargs):
+            del model_path, kwargs
+            return object()
+
+    class FakeProcessor:
+        def __init__(self, *, image_processor, tokenizer):
+            del image_processor, tokenizer
+
+    class FakeTokenizer:
+        @classmethod
+        def from_pretrained(cls, model_path, **kwargs):
+            del model_path, kwargs
+            return cls()
+
+    class FakeBitsAndBytesConfig:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    class FakeModel:
+        @classmethod
+        def from_pretrained(cls, model_path, **kwargs):
+            del model_path, kwargs
+            fake_modeling_utils.dispatch_model(object(), device_map={"": 0})
+            return cls()
+
+        def to(self, device, dtype=None):
+            del device, dtype
+            return self
+
+    def fake_dispatch_model(model, *args, **kwargs):
+        del model, args
+        calls["force_hooks"] = kwargs.get("force_hooks")
+        return object()
+
+    fake_modeling.OpenVLAForActionPrediction = FakeModel
+    fake_processing.PrismaticProcessor = FakeProcessor
+    fake_processing.PrismaticImageProcessor = FakeImageProcessor
+    fake_transformers.AutoTokenizer = FakeTokenizer
+    fake_transformers.BitsAndBytesConfig = FakeBitsAndBytesConfig
+    fake_modeling_utils.dispatch_model = fake_dispatch_model
+
+    monkeypatch.setitem(sys.modules, "prismatic", fake_prismatic)
+    monkeypatch.setitem(sys.modules, "prismatic.extern", fake_prismatic_extern)
+    monkeypatch.setitem(sys.modules, "prismatic.extern.hf", fake_prismatic_hf)
+    monkeypatch.setitem(sys.modules, "prismatic.extern.hf.modeling_prismatic", fake_modeling)
+    monkeypatch.setitem(sys.modules, "prismatic.extern.hf.processing_prismatic", fake_processing)
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+    monkeypatch.setitem(sys.modules, "transformers.modeling_utils", fake_modeling_utils)
+
+    sys.modules.pop("roboneuron_core.runtime.openvla_worker", None)
+    openvla_worker = importlib.import_module("roboneuron_core.runtime.openvla_worker")
+
+    worker = openvla_worker.OpenVLAWorker(
+        model_path="checkpoints/openvla/openvla-7b",
+        attn_implementation="flash_attention_2",
+        dtype_name="float16",
+        device_name="cuda:0",
+        runtime_quantization="4bit",
+        low_cpu_mem_usage=True,
+    )
+    worker.load()
+
+    assert calls["force_hooks"] is True

@@ -109,6 +109,32 @@ def _build_quantization_kwargs(
     }
 
 
+def _enable_quantized_force_hooks() -> None:
+    """Force accelerate hook dispatch for quantized models on a single device.
+
+    Transformers 4.40.x routes quantized single-device loads through
+    ``dispatch_model(...)->model.to(device)`` unless ``force_hooks`` is set.
+    bitsandbytes < 0.43.2 rejects that ``.to(...)`` call for 4-bit models, so
+    patch the local dispatch entrypoint used by ``from_pretrained`` to keep the
+    quantized path on the hook-based branch.
+    """
+
+    modeling_utils = importlib.import_module("transformers.modeling_utils")
+    if getattr(modeling_utils, "_roboneuron_quantized_force_hooks_enabled", False):
+        return
+
+    original_dispatch_model = getattr(modeling_utils, "dispatch_model", None)
+    if original_dispatch_model is None:
+        raise RuntimeError("transformers.modeling_utils.dispatch_model is unavailable.")
+
+    def _dispatch_model_with_force_hooks(model, *args, **kwargs):
+        kwargs.setdefault("force_hooks", True)
+        return original_dispatch_model(model, *args, **kwargs)
+
+    modeling_utils.dispatch_model = _dispatch_model_with_force_hooks
+    modeling_utils._roboneuron_quantized_force_hooks_enabled = True
+
+
 class OpenVLAWorker:
     def __init__(
         self,
@@ -138,6 +164,8 @@ class OpenVLAWorker:
         logger.info("Loading OpenVLA runtime from %s on %s", self.model_path, self.device)
 
         self.processor = self._load_processor()
+        if self.runtime_quantization != "none":
+            _enable_quantized_force_hooks()
         self.model = OpenVLAForActionPrediction.from_pretrained(
             self.model_path,
             attn_implementation=self.attn_implementation,
